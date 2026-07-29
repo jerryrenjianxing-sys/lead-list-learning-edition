@@ -4,7 +4,7 @@
 
 ## 下载与运行
 
-1. 打开 Releases，下载 `潜客名单-学习版-v2026.07.29-windows-x64.zip`。
+1. 打开 Releases，下载 `lead-list-learning-edition-v2026.07.29-windows-x64.zip`。
 2. 完整解压 ZIP，不要直接在压缩包内运行。
 3. 首次使用双击 `首次安装.cmd`，等待安装完成。
 4. 双击 `启动潜客名单.cmd`。
