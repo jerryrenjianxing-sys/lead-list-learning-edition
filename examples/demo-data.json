@@ -1,0 +1,12 @@
+{
+  "name": "演示数据 · 城市通勤体验",
+  "metadata": {"synthetic": true, "description": "合成数据，不代表真实用户或平台。可自由定义分析目标。"},
+  "records": [
+    {"source_id":"demo-1","platform":"demo","kind":"post","payload":{"text":"新开的地铁站缩短了通勤时间，但早高峰换乘走廊有些拥挤。","topic":"地铁","city":"示例城市"}},
+    {"source_id":"demo-2","platform":"demo","kind":"comment","payload":{"text":"共享单车价格可以接受，晚上找车比较困难。","topic":"骑行","city":"示例城市"}},
+    {"source_id":"demo-3","platform":"demo","kind":"comment","payload":{"text":"公交实时到站提醒很方便，希望显示无障碍车辆信息。","topic":"公交","city":"示例城市"}},
+    {"source_id":"demo-4","platform":"demo","kind":"post","payload":{"text":"雨天骑行不方便，我通常改坐公交，路线选择需要比较久。","topic":"多方式出行","city":"示例城市"}},
+    {"source_id":"demo-5","platform":"demo","kind":"comment","payload":{"text":"步行到公司很轻松，路口等红灯的时间偏长。","topic":"步行","city":"示例城市"}},
+    {"source_id":"demo-6","platform":"demo","kind":"comment","payload":{"text":"朋友觉得新线路不错，我还没有坐过。","topic":"地铁","city":"示例城市"}}
+  ]
+}
