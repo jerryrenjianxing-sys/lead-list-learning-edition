@@ -18,6 +18,16 @@ def gh(*args, ok=True):
     return result
 
 
+def find_release(tag):
+    # GET /releases/tags/{tag} only returns published releases. List releases
+    # with our write-capable token to include drafts and support failed-upload retries.
+    pages = json.loads(gh("api", "--paginate", "--slurp", f"repos/{REPO}/releases?per_page=100").stdout)
+    matches = [release for page in pages for release in page if release["tag_name"] == tag]
+    if len(matches) > 1:
+        raise RuntimeError("Multiple releases use this tag; refusing ambiguous publication")
+    return matches[0] if matches else None
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--tag", required=True)
@@ -50,16 +60,15 @@ def main():
         digest, name = line.split("  ", 1)
         if hashes.get(name) != digest:
             raise ValueError("Asset changed after collection: " + name)
-    existing = gh("api", f"repos/{REPO}/releases/tags/{args.tag}", ok=False)
-    if existing.returncode == 0:
-        release = json.loads(existing.stdout)
+    release = find_release(args.tag)
+    if release is not None:
         if not release["draft"]:
             raise RuntimeError("Published releases cannot be overwritten")
     else:
-        if "404" not in existing.stderr:
-            raise RuntimeError("Unable to inspect existing release")
         gh("release", "create", args.tag, "--repo", REPO, "--verify-tag", "--draft", "--prerelease", "--title", f"Media Deep Researcher {version} 预览版", "--notes-file", str(ROOT / "docs/RELEASE_NOTES.md"))
-        release = json.loads(gh("api", f"repos/{REPO}/releases/tags/{args.tag}").stdout)
+        release = find_release(args.tag)
+        if release is None:
+            raise RuntimeError("Created draft is not visible; retry publication later")
     present = {a["name"]: a for a in release["assets"]}
     for file in files:
         if file.name in present:
@@ -67,7 +76,7 @@ def main():
                 raise RuntimeError("Existing draft asset differs: " + file.name)
         else:
             gh("release", "upload", args.tag, str(file), "--repo", REPO)
-    uploaded = json.loads(gh("api", f"repos/{REPO}/releases/tags/{args.tag}").stdout)
+    uploaded = json.loads(gh("api", f"repos/{REPO}/releases/{release['id']}").stdout)
     assets = {a["name"]: a for a in uploaded["assets"]}
     if set(assets) != names:
         raise RuntimeError("Draft contains missing or unexpected assets")
@@ -75,7 +84,10 @@ def main():
         if assets[file.name].get("digest") != "sha256:" + hashes[file.name] or assets[file.name]["size"] != file.stat().st_size:
             raise RuntimeError("Uploaded asset verification failed: " + file.name)
     gh("release", "edit", args.tag, "--repo", REPO, "--draft=false", "--prerelease", "--latest=false")
-    print(json.dumps({"url": uploaded["html_url"], "assets_verified": len(files), "source_commit": commit}))
+    published = json.loads(gh("api", f"repos/{REPO}/releases/{release['id']}").stdout)
+    if published["draft"]:
+        raise RuntimeError("Release is still a draft")
+    print(json.dumps({"url": published["html_url"], "assets_verified": len(files), "source_commit": commit}))
 
 
 if __name__ == "__main__":
