@@ -211,6 +211,8 @@ def test_real_browser_reuse_snapshot_and_worker_disconnect(
         assert manager.process.poll() is None
         db.execute("UPDATE jobs SET state='completed' WHERE id=?", (first["id"],))
         manager.call("release", lease=lease["lease"])
+        assert manager.context.pages == [manager.keepalive_page]
+        assert not manager.keepalive_page.is_closed()
         second = create(db)
         new_lease = manager.call("acquire", job=q._claim())
         assert manager.process.pid == pid

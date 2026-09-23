@@ -121,3 +121,40 @@ def test_real_diagnostic_timeout_and_cancel_cleanup(tmp_path, cancel):
         assert not manager.workspace.exists()
     finally:
         manager.close()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows process job ownership")
+def test_process_scope_closes_children_created_before_assignment(tmp_path):
+    import subprocess
+    import sys
+    import psutil
+    from workbench.process_scope import ProcessScope
+    from workbench.queue import kill_tree
+
+    child_file = tmp_path / "child.txt"
+    code = (
+        "import subprocess,sys,time,pathlib; "
+        "p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(120)']); "
+        "pathlib.Path(sys.argv[1]).write_text(str(p.pid)); time.sleep(120)"
+    )
+    parent = subprocess.Popen([sys.executable, "-c", code, str(child_file)])
+    scope = ProcessScope()
+    descendants = []
+    try:
+        deadline = time.monotonic() + 10
+        while not child_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert child_file.exists()
+        descendants = psutil.Process(parent.pid).children(recursive=True)
+        assert any(p.pid == int(child_file.read_text()) for p in descendants)
+        scope.assign(parent)
+        scope.close()
+        parent.wait(timeout=5)
+        _, alive = psutil.wait_procs(descendants, timeout=5)
+        assert not alive
+    finally:
+        scope.close()
+        for child in descendants:
+            if child.is_running():
+                child.kill()
+        kill_tree(parent.pid)

@@ -50,6 +50,7 @@ class SessionManager:
         self.start_lock = threading.Lock()
         self.ready = threading.Event()
         self.browser = self.context = self.process = self.pw = None
+        self.keepalive_page = None
         self.platform = self.lease = None
         self.identity = {}
         self.endpoint = ""
@@ -278,6 +279,10 @@ class SessionManager:
             if not self.browser:
                 raise RuntimeError("登录浏览器启动超时，已保留原账号档案，请重试。")
             self.context = self.browser.contexts[0]
+            # CDP can connect before Chromium exposes its initial about:blank tab.
+            # Own a known tab before a worker attaches, so closing worker pages
+            # cannot close the last browser window and end the shared session.
+            self.keepalive_page = await self.context.new_page()
             if snapshot:
                 if missing:
                     await self.context.set_storage_state(snapshot)
@@ -407,9 +412,11 @@ class SessionManager:
         if self.context and json.loads(job["options"]).get("session_action") != "open":
             # Leave a blank page alive; never close the persistent context from a worker.
             try:
-                await self.context.new_page()
-                for page in self.context.pages[:-1]:
-                    await page.close()
+                if not self.keepalive_page or self.keepalive_page.is_closed():
+                    self.keepalive_page = await self.context.new_page()
+                for page in list(self.context.pages):
+                    if page != self.keepalive_page:
+                        await page.close()
                 window_visibility(self.process.pid, False)
             except Exception:
                 pass
@@ -445,6 +452,7 @@ class SessionManager:
 
                 kill_tree(self.process.pid)
         self.context = self.browser = self.process = None
+        self.keepalive_page = None
         self.platform = None
         self.verified = False
         self.pending_auth_generation = False
