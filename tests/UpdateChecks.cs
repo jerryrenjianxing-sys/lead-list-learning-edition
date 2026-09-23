@@ -78,6 +78,7 @@ internal static class UpdateChecks {
             using(var hash=SHA1.Create())asset.SHA1=BitConverter.ToString(hash.ComputeHash(new byte[]{1,2,3})).Replace("-","");
             var transport=new FixtureDownloader{Asset=asset};
             var source=new WorkbenchGithubSource(transport);
+            Require(System.Net.ServicePointManager.SecurityProtocol==System.Net.SecurityProtocolType.SystemDefault);
             var locator=new TestVelopackLocator("MediaWorkbench.Desktop","0.2.0",folder,null);
             var manager=new UpdateManager(source,new UpdateOptions{ExplicitChannel=UpdatePolicy.Channel,AllowVersionDowngrade=false},locator);
             var candidate=manager.CheckForUpdatesAsync().GetAwaiter().GetResult();

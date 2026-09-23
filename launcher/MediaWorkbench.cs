@@ -18,6 +18,7 @@ using Velopack;
 
 [assembly: AssemblyTitle("Media Deep Researcher")]
 [assembly: AssemblyProduct("Media Deep Researcher")]
+[assembly: System.Runtime.Versioning.TargetFramework(".NETFramework,Version=v4.8", FrameworkDisplayName=".NET Framework 4.8")]
 internal static class Program {
     internal static readonly string Root = AppDomain.CurrentDomain.BaseDirectory;
     internal static readonly string Data = Environment.GetEnvironmentVariable("MEDIAWORKBENCH_DATA_DIR") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MediaWorkbench", "data");
