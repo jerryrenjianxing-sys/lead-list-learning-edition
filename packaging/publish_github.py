@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import tomllib
+from collect_delivery import full_package
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = "jerryrenjianxing-sys/lead-list-learning-edition"
@@ -34,13 +35,17 @@ def main():
         raise ValueError("Public tag and packaged source differ")
     files = sorted(p for p in directory.iterdir() if p.is_file())
     names = {p.name for p in files}
-    required = {"releases.win-preview.json", f"MediaWorkbench.Desktop-{version}-full.nupkg", "MediaWorkbench-Skill.zip", "SHA256SUMS.txt", "LICENSE", "THIRD_PARTY_NOTICES.md"}
+    required = {"releases.win-preview.json", full_package(directory, version).name, "MediaWorkbench-Skill.zip", "SHA256SUMS.txt", "LICENSE", "THIRD_PARTY_NOTICES.md"}
     if not required <= names or not any(n.endswith("Setup.exe") for n in names):
         raise ValueError("Missing release assets")
     hashes = {}
     for file in files:
         with file.open("rb") as stream:
             hashes[file.name] = hashlib.file_digest(stream, "sha256").hexdigest()
+    for entry in json.loads((directory / "releases.win-preview.json").read_text(encoding="utf-8"))["Assets"]:
+        name = entry["FileName"]
+        if hashes.get(name) != entry["SHA256"].lower() or (directory / name).stat().st_size != entry["Size"]:
+            raise ValueError("Update feed does not match packaged files")
     for line in (directory / "SHA256SUMS.txt").read_text().splitlines():
         digest, name = line.split("  ", 1)
         if hashes.get(name) != digest:

@@ -11,6 +11,17 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def full_package(release, version):
+    feed = json.loads((release / "releases.win-preview.json").read_text(encoding="utf-8"))
+    candidates = [a for a in feed["Assets"] if a["PackageId"] == "MediaWorkbench.Desktop" and a["Version"] == version and a["Type"] == "Full"]
+    if len(candidates) != 1:
+        raise ValueError("Expected exactly one full update package for this version")
+    name = candidates[0]["FileName"]
+    if Path(name).name != name or not name.endswith("-full.nupkg"):
+        raise ValueError("Invalid release package name")
+    return release / name
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--version", required=True)
@@ -18,7 +29,7 @@ def main():
     parser.add_argument("--include-evidence", action="store_true")
     args = parser.parse_args()
     release = Path(args.release_directory) if args.release_directory else ROOT / "release" / args.version
-    package = release / f"MediaWorkbench.Desktop-{args.version}-full.nupkg"
+    package = full_package(release, args.version)
     with zipfile.ZipFile(package) as archive:
         prefix = "lib/app/"
         manifest = json.loads(archive.read(prefix + "build-manifest.json"))

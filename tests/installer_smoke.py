@@ -7,12 +7,15 @@ from pathlib import Path
 import sqlite3
 import subprocess
 import time
+import tomllib
 from urllib.request import build_opener, ProxyHandler
 
 root = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
 parser.add_argument("--directory", default=str(root / ".cache/安装验收 新目录"))
-directory = Path(parser.parse_args().directory).resolve()
+parser.add_argument("--setup")
+args = parser.parse_args()
+directory = Path(args.directory).resolve()
 install = (directory / "应用").resolve()
 assert install.is_relative_to((root / ".cache").resolve())
 if install.exists():
@@ -20,7 +23,8 @@ if install.exists():
         "Use a fresh test install directory; do not overwrite an existing installation"
     )
 directory.mkdir(parents=True, exist_ok=True)
-setup = next((root / "release").glob("*-Setup.exe"))
+version = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+setup = Path(args.setup).resolve() if args.setup else next((root / "release" / version).glob("*-Setup.exe"))
 instance = directory / "instance.json"
 data = directory / "用户数据"
 env = {

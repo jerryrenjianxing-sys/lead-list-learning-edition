@@ -26,6 +26,7 @@ jobs:
         with:
           node-version: '22.22.3'
       - run: uv sync --locked --python 3.11.16
+      - run: .venv/Scripts/python.exe -m playwright install chromium
       - run: .venv/Scripts/python.exe -m pytest tests -q
       - run: npm.cmd --prefix webui ci --no-audit --no-fund
       - run: npm.cmd --prefix webui run build
