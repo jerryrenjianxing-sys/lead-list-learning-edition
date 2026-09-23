@@ -149,6 +149,9 @@ class SelfTests:
         try:
             env = {k: v for k, v in os.environ.items() if not k.startswith("MEDIAWORKBENCH_") and k not in {"PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV"}}
             env.update(PYTHONUTF8="1", PYTHONIOENCODING="utf-8", PYTHONPATH=str(ROOT))
+            temporary = self.workspace / "temp"
+            temporary.mkdir()
+            env.update(TEMP=str(temporary), TMP=str(temporary), TMPDIR=str(temporary))
             runtime = ROOT / "runtime"
             if runtime.exists():
                 env["PATH"] = str(runtime / "node") + os.pathsep + os.environ.get("SystemRoot", "C:\\Windows") + "\\System32"

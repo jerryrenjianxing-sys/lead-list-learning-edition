@@ -175,8 +175,10 @@ class Runner:
         node = ROOT / "runtime/node/node.exe"
         executable = str(node) if node.exists() else shutil.which("node")
         assert executable, "Node unavailable"
-        result = subprocess.run([executable, "-p", "21*2"], capture_output=True, timeout=10, check=True)
-        assert result.stdout.strip() == b"42"
+        result = subprocess.run([executable, "-p", "JSON.stringify({answer:21*2,temp:require('os').tmpdir()})"], capture_output=True, timeout=10, check=True)
+        node_result = json.loads(result.stdout)
+        assert node_result["answer"] == 42
+        assert Path(node_result["temp"]).resolve().is_relative_to(self.directory.resolve())
         from playwright.sync_api import sync_playwright
         with sync_playwright() as pw:
             browser = pw.chromium.launch()
