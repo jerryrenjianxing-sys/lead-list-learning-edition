@@ -23,6 +23,10 @@ def run(*args, **kwargs):
 
 def main():
     CACHE.mkdir(parents=True, exist_ok=True)
+    if STAGE.exists():
+        if STAGE.is_symlink() or not STAGE.resolve().is_relative_to((ROOT / "build").resolve()):
+            raise RuntimeError("Unexpected staging directory")
+        shutil.rmtree(STAGE)
     STAGE.mkdir(parents=True, exist_ok=True)
     locked = json.loads(LOCK.read_text(encoding="utf-8")) if LOCK.exists() else {}
 
@@ -45,12 +49,8 @@ def main():
             assert actual == (expected or previous["sha256"]), (
                 f"Checksum mismatch: {name}"
             )
-        locked[name] = {
-            "url": previous.get("url", url),
-            "sha256": actual,
-            "size": path.stat().st_size,
-        }
-        LOCK.write_text(json.dumps(locked, indent=2), encoding="utf-8", newline="\n")
+        if not previous or actual != previous.get("sha256"):
+            raise RuntimeError("Release downloads must already exist in downloads.lock.json: " + name)
         return path
 
     ignore = shutil.ignore_patterns(
@@ -90,11 +90,12 @@ def main():
         "RECOVERY.md",
         "LOGIN_SESSIONS.md",
         "PUBLIC_PREVIEW.md",
+        "RELEASE_NOTES.md",
     ):
         for file in (ROOT / "docs").glob(pattern):
             shutil.copy2(file, STAGE / "docs" / file.name)
     for file in (ROOT / "build" / "launcher").iterdir():
-        if file.is_file():
+        if file.is_file() and file.suffix.lower() in (".exe", ".dll"):
             shutil.copy2(file, STAGE / file.name)
     notices = STAGE / "licenses"
     notices.mkdir(exist_ok=True)
@@ -129,7 +130,7 @@ def main():
     if python_target.exists():
         shutil.rmtree(python_target)
     shutil.copytree(python.parent, python_target, ignore=ignore)
-    requirements = ROOT / "packaging" / "requirements.lock.txt"
+    requirements = CACHE / "requirements.generated.txt"
     subprocess.run(
         [
             "uv",
@@ -146,6 +147,10 @@ def main():
         check=True,
         stdout=subprocess.DEVNULL,
     )
+    def dependency_lines(path):
+        return [line for line in path.read_text(encoding="utf-8").splitlines() if not line.lstrip().startswith("#")]
+    if dependency_lines(requirements) != dependency_lines(ROOT / "packaging/requirements.lock.txt"):
+        raise RuntimeError("Exported dependencies differ from committed requirements.lock.txt")
     subprocess.run(
         [
             "uv",
@@ -218,11 +223,11 @@ def main():
         raise RuntimeError("Unexpected FFmpeg staging path")
     if obsolete_ffmpeg.exists():
         shutil.rmtree(obsolete_ffmpeg)
+    version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+    (STAGE / "build-version.json").write_text(json.dumps({"version": version, "channel": "win-preview"}), encoding="utf-8")
     manifest = {
         "product": "MediaWorkbench",
-        "version": tomllib.loads(
-            (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-        )["project"]["version"],
+        "version": version,
         "python": "3.11.16",
         "node": "22.22.3",
         "upstream": "380b426000aac3d612837ed72c99808347dc94c9",

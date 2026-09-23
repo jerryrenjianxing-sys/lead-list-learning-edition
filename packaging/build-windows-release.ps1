@@ -1,10 +1,13 @@
-﻿param([string]$Version='0.1.1')
+﻿param([string]$Version='', [string]$Tag='')
 $ErrorActionPreference='Stop'
 $projectRoot=Split-Path $PSScriptRoot -Parent
 Push-Location $projectRoot
 try {
-    $sourceVersion=(Get-Content (Join-Path $projectRoot 'workbench\__init__.py') -Raw) -replace '(?s).*__version__\s*=\s*"([^"]+)".*','$1'
-    if ($Version -ne $sourceVersion.Trim()) { throw 'Package version must match workbench/__init__.py and launcher assembly version' }
+    $sourceVersion=[regex]::Match((Get-Content (Join-Path $projectRoot 'pyproject.toml') -Raw), '(?m)^version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"').Groups[1].Value
+    if (-not $Version) { $Version=$sourceVersion }
+    if ($Version -ne $sourceVersion -or ($Tag -and $Tag -ne "v$Version")) { throw 'Tag and package must match pyproject.toml version' }
+    $releaseDirectory=Join-Path $projectRoot "release\$Version"
+    if (Test-Path -LiteralPath (Join-Path $releaseDirectory 'build-integrity.json')) { throw 'This version has already been built. Use a clean build checkout.' }
     & uv sync --locked --python 3.11.16
     if ($LASTEXITCODE -ne 0) { throw 'Python dependency preparation failed' }
     & npm.cmd --prefix webui ci --no-audit --no-fund
@@ -15,8 +18,8 @@ try {
     & '.\.venv\Scripts\python.exe' (Join-Path $PSScriptRoot 'stage.py')
     if ($LASTEXITCODE -ne 0) { throw 'Release staging failed' }
     $toolchain=& (Join-Path $PSScriptRoot 'bootstrap-velopack.ps1')
-    & $toolchain.Dotnet $toolchain.Vpk pack --packId MediaWorkbench.Desktop --packVersion $Version --packDir (Join-Path $projectRoot 'build\MediaWorkbench') --mainExe MediaWorkbench.exe --packTitle 'Media Deep Researcher' --icon (Join-Path $projectRoot 'webui\public\brand\media-deep-researcher.ico') --packAuthors 'MediaWorkbench contributors' --outputDir (Join-Path $projectRoot 'release') --delta None
+    & $toolchain.Dotnet $toolchain.Vpk pack --packId MediaWorkbench.Desktop --packVersion $Version --channel win-preview --packDir (Join-Path $projectRoot 'build\MediaWorkbench') --mainExe MediaWorkbench.exe --packTitle 'Media Deep Researcher' --icon (Join-Path $projectRoot 'webui\public\brand\media-deep-researcher.ico') --packAuthors 'MediaWorkbench contributors' --releaseNotes (Join-Path $projectRoot 'docs\RELEASE_NOTES.md') --outputDir $releaseDirectory --delta None
     if ($LASTEXITCODE -ne 0) { throw 'Windows installer packaging failed' }
-    & '.\.venv\Scripts\python.exe' (Join-Path $PSScriptRoot 'collect_delivery.py') --version $Version
+    & '.\.venv\Scripts\python.exe' (Join-Path $PSScriptRoot 'collect_delivery.py') --version $Version --release-directory $releaseDirectory
     if ($LASTEXITCODE -ne 0) { throw 'Delivery archive or integrity verification failed' }
 } finally { Pop-Location }

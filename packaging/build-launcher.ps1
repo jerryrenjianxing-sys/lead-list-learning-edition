@@ -1,7 +1,13 @@
 ﻿param([string]$OutputDirectory = (Join-Path $PSScriptRoot '..\build\launcher'))
 $ErrorActionPreference = 'Stop'
+$projectRoot = Split-Path $PSScriptRoot -Parent
+$projectText = Get-Content (Join-Path $projectRoot 'pyproject.toml') -Raw -Encoding UTF8
+$version = [regex]::Match($projectText, '(?m)^version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"').Groups[1].Value
+if (-not $version) { throw 'Invalid project version' }
 $cache = Join-Path $PSScriptRoot 'cache'
 New-Item -ItemType Directory -Force -Path $cache,$OutputDirectory | Out-Null
+$versionFile = Join-Path $OutputDirectory 'Version.cs'
+[IO.File]::WriteAllText($versionFile, "using System.Reflection;`n[assembly: AssemblyVersion(`"$version.0`")]`n[assembly: AssemblyFileVersion(`"$version.0`")]`n", (New-Object Text.UTF8Encoding($false)))
 function Package([string]$name,[string]$version,[string]$folder) {
     $destination = Join-Path $cache $folder
     $archive = Join-Path $cache "$name.$version.zip"
@@ -23,6 +29,8 @@ $compileArgs = @('/nologo','/codepage:65001','/target:winexe','/platform:x64','/
 foreach ($reference in $references) { $compileArgs += "/reference:$reference" }
 $compileArgs += "/win32icon:$(Join-Path $PSScriptRoot '..\webui\public\brand\media-deep-researcher.ico')"
 $compileArgs += (Join-Path $PSScriptRoot '..\launcher\MediaWorkbench.cs')
+$compileArgs += (Join-Path $PSScriptRoot '..\launcher\Updates.cs')
+$compileArgs += $versionFile
 & $compiler @compileArgs
 if ($LASTEXITCODE -ne 0) { throw 'Launcher compilation failed' }
 foreach ($reference in $references) { Copy-Item -LiteralPath $reference -Destination $OutputDirectory -Force }

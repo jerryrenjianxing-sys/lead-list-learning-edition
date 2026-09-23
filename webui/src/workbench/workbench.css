@@ -656,3 +656,17 @@ button.wb-primary {
   line-height: 1.7;
   margin: 0 0 20px;
 }
+.wb-check-actions { display: flex; gap: 12px; flex-wrap: wrap; margin: 16px 0; }
+.wb-check-list { list-style: none; padding: 0; margin: 20px 0; }
+.wb-check-list li { padding: 12px 0; border-bottom: 1px solid var(--border, #8885); }
+.wb-check-list li > div { display: flex; gap: 12px; justify-content: space-between; flex-wrap: wrap; }
+.wb-check-list li p { margin: 6px 0 0; font-size: .9rem; }
+.wb-check-state { border-radius: 999px; padding: 2px 10px; background: #8882; }
+.check-passed { color: #167d60; background: #19b88b20; }
+.check-failed, .wb-check-error { color: #df615a; }
+.check-running { color: #168abc; }
+.check-limited, .check-unconfirmed { color: #b17c22; }
+.wb-update-notes { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; max-height: 240px; overflow: auto; }
+[data-theme="dark"] .check-passed { color: #79d9b6; }
+[data-theme="dark"] .check-running { color: #80cce9; }
+[data-theme="dark"] .check-limited, [data-theme="dark"] .check-unconfirmed { color: #ebc079; }

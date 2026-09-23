@@ -4,6 +4,11 @@ from pydantic import BaseModel, Field, ConfigDict, model_validator
 Platform = Literal["xhs", "dy", "ks", "bili", "wb", "tieba", "zhihu"]
 
 
+class SelfTestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    include_network: bool = True
+
+
 class CrawlRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     platform: Platform

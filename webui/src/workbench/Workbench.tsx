@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import PlatformLogin, { authLabel } from "./PlatformLogin";
+import RuntimeChecks from "./RuntimeChecks";
 import "./workbench.css";
 type Item = Record<string, any>;
 const platforms = [
@@ -42,7 +43,9 @@ function Status({ value }: { value: string }) {
   );
 }
 export default function Workbench() {
-  const [tab, T] = useState("overview"),
+  const [version, setVersion] = useState("");
+  useEffect(() => { void api("/health").then(h => setVersion(h.version)).catch(() => {}); }, []);
+  const [tab, T] = useState(location.hash === "#manage/settings" ? "settings" : "overview"),
     [error, E] = useState(""),
     [busy, B] = useState(false),
     [notice, N] = useState("");
@@ -258,6 +261,12 @@ export default function Workbench() {
     DX(d);
     T("settings");
   }
+  useEffect(() => {
+    const navigate = () => { if (location.hash === "#manage/settings") void perform(showSettings); };
+    navigate();
+    window.addEventListener("hashchange", navigate);
+    return () => window.removeEventListener("hashchange", navigate);
+  }, []);
   async function demo() {
     const r = await api("/demo", "POST", {});
     await showData(r.id);
@@ -299,7 +308,7 @@ export default function Workbench() {
         <a className="wb-skill-link" href="#">
           ← 返回 Skill 首页
         </a>
-        <small>Media Deep Researcher · 0.1.1</small>
+        <small>Media Deep Researcher{version && ` · ${version}`}</small>
       </aside>
       <main className="wb-main">
         <header className="wb-top">
@@ -1049,7 +1058,7 @@ export default function Workbench() {
               </button>
             </section>
             <section className="wb-card">
-              <h2>运行检查</h2>
+              <h2>后台状态</h2>
               <p>
                 后台队列：{diagnostics.queue_alive ? "正常" : "未运行"} · Python{" "}
                 {diagnostics.python} · 软件 {diagnostics.version}
@@ -1058,6 +1067,7 @@ export default function Workbench() {
                 重新检查
               </button>
             </section>
+            <RuntimeChecks />
           </>
         )}
       </main>

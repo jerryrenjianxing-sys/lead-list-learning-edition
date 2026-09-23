@@ -8,12 +8,12 @@
 
 产品显示名为 Media Deep Researcher；内部应用标识及数据目录继续使用 MediaWorkbench，兼容已有安装、登录会话和 Skill 客户端。
 
-> 当前是 0.1.1 公开预览版，GitHub 标签为 `v0.1.1-preview.1`。新增自动保存与恢复登录；见[本轮会话升级说明](docs/LOGIN_SESSIONS.md)。真实平台、独立 Agent 推理及干净 Windows 系统仍按[验证报告](docs/VALIDATION.md)逐项验收。
+> 当前是 0.2.0 预览版，GitHub 标签为 `v0.2.0`。新增独立运行自检及 GitHub 软件内升级；见[版本说明](docs/RELEASE_NOTES.md)。真实平台、独立 Agent 推理及干净 Windows 系统仍按[验证报告](docs/VALIDATION.md)逐项验收。
 
 ## 下载
 
-- [下载 Windows x64 安装包](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/download/v0.1.1-preview.1/MediaWorkbench.Desktop-win-Setup.exe)：包含 Python、Node、采集浏览器与 WebView2 离线安装程序，无需自行配置开发环境。
-- [新版发行页](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/tag/v0.1.1-preview.1)：便携版、完整源码、Skill、校验值与验收说明。
+- [下载 Windows x64 安装包](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/download/v0.2.0/MediaWorkbench.Desktop-win-preview-Setup.exe)：包含 Python、Node、采集浏览器与 WebView2 离线安装程序，无需自行配置开发环境。
+- [新版发行页](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/tag/v0.2.0)：便携版、完整源码、Skill、更新包、校验值与验收说明。
 - [旧版下载](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/tag/v2026.07.29)：保留 2026 年 7 月的学习版。
 
 普通使用者下载安装包；GitHub 的 **Code → Download ZIP** 提供开发源码。安装新版不会自动导入 7 月旧版的采集文件，可在任务台按需导入。
@@ -22,9 +22,13 @@
 
 安装完整包后启动「Media Deep Researcher」，在首页点击「复制 Skill」，粘贴给能执行本地命令的 Agent。Agent 按说明获取完整 Skill 和配套客户端，然后连接软件。Windows 客户端 scripts/workbench.ps1 自动找到软件和内置 Python。也可以进入任务台手动采集、导入数据、查看分析与导出成果。
 
-首次体验可点击「加载演示数据」。这是合成的通勤反馈；分析目标、方法、字段、数量和输出形式由用户决定。Agent 能保存任意结构化结果、证据引用和其他文件附件。
+只想确认软件能否运行时，在任务台「设置 → 运行自检」点击「一键自检」；断网可选「仅检查本机」。自检无需社媒账号或模型，测试数据自动清理，不创建正式任务或研究报告。Skill 也支持 `scripts/workbench.ps1 self-test`。本机检查和游客联网试采分别给出状态，不代表七平台全部功能通过。
 
-发行附件和本地 `release` 目录包含完整安装包 `MediaWorkbench.Desktop-win-Setup.exe`、便携包、Skill ZIP、源码 ZIP 和 SHA256 校验表。系统验收目标为 Windows 10/11 x64；当前已在本机完成安装/卸载/重装保留数据测试，干净系统验收尚待完成。
+要体验分析，可点击「加载演示数据」。这是合成的通勤反馈；分析目标、方法、字段、数量和输出形式由用户决定。Agent 能保存任意结构化结果、证据引用和其他文件附件。
+
+发行附件和本地 `release/0.2.0` 目录包含完整安装包 `MediaWorkbench.Desktop-win-preview-Setup.exe`、便携包、Skill ZIP、源码 ZIP 和 SHA256 校验表。系统验收目标为 Windows 10/11 x64；干净系统验收尚待完成。
+
+0.1.1 首次运行新版完整安装包接入更新通道；以后在设置或托盘检查更新。自动检查最多每天一次，只提示；下载和安装分别由用户点击。采集或自检运行时暂缓安装，安装前备份数据。
 
 - 七个平台：小红书、抖音、快手、哔哩哔哩、微博、贴吧、知乎；具体能力通过接口与平台登录页展示。
 - 持久化队列：界面与 Skill 操作同一任务，刷新页面或关闭 Agent 不丢队列。
@@ -55,6 +59,8 @@ powershell -ExecutionPolicy Bypass -File packaging/build-windows-release.ps1
 ```
 
 完整包从 python-build-standalone 提供的 Python 3.11.16、锁定的 Python wheels、Node.js 22.22.3、Playwright Chromium 和官方 WebView2 离线安装程序构建。构建脚本会校验已锁定下载的 SHA256。应用不下载媒体，不再分发独立 FFmpeg/FFprobe 程序。Windows 壳使用系统 C# 编译器、WebView2 SDK 与 Velopack SDK，无需安装 Python/Node 到用户系统。
+
+版本唯一来源为 `pyproject.toml`。公开 `main` 提交触发检查；`v版本号` 标签触发 Windows 构建、自检及 GitHub 草稿上传。全部附件校验通过后才公开预览发行，标签与源码版本不一致时拒绝发布。`win-preview` 通道用于本阶段预览版本，已公开的同版本文件不覆盖。
 
 ## 架构
 

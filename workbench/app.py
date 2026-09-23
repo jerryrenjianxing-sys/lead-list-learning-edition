@@ -33,11 +33,13 @@ from .models import (
     FinishRequest,
     ExportRequest,
     JobHistoryRequest,
+    SelfTestRequest,
 )
 from .paths import ROOT, PRODUCT, DISPLAY_NAME, data_root
 from .queue import Queue, PLATFORMS, create_job, control, job_view, clear_history
 from .auth import platform_view
 from .sessions import SessionManager
+from .selftest import SelfTests
 
 SKILL = ROOT / "skills" / "media-workbench"
 
@@ -82,6 +84,7 @@ def make_app(root=None, *, run_queue=True):
     db = Database(root)
     sessions = SessionManager(db)
     queue = Queue(db, sessions=sessions if run_queue else None)
+    self_tests = SelfTests(root)
     key_file = root / ".access-token"
     if not key_file.exists():
         key_file.write_text(secrets.token_urlsafe(32), encoding="ascii")
@@ -97,12 +100,14 @@ def make_app(root=None, *, run_queue=True):
         if run_queue:
             queue.start()
         yield
+        self_tests.close()
         queue.close()
         sessions.close()
 
     app = FastAPI(title=DISPLAY_NAME, version=__version__, lifespan=lifespan)
     app.state.db, app.state.queue, app.state.token = db, queue, token
     app.state.sessions = sessions
+    app.state.self_tests = self_tests
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
@@ -222,6 +227,7 @@ def make_app(root=None, *, run_queue=True):
                 "artifacts",
                 "settings",
                 "diagnostics",
+                "self_test",
                 "imports",
             ],
             "analysis": "user_defined",
@@ -240,7 +246,7 @@ def make_app(root=None, *, run_queue=True):
         if format == "connect":
             address = str(request.base_url).rstrip("/")
             return PlainTextResponse(
-                f"请使用Media Deep Researcher处理我的任务。它已在本机运行：{address}。下载 {address}/api/v1/skill 的完整 ZIP，解压后读取 media-workbench/SKILL.md，使用随包客户端连接。先运行 scripts/workbench.ps1 check（Windows），或 python scripts/workbench.py check。按我的目标自行决定分析方法、字段和输出形式，进度与成果保存回软件。连接失败时报告实际原因。",
+                f"请使用Media Deep Researcher处理我的任务。它已在本机运行：{address}。下载 {address}/api/v1/skill 的完整 ZIP，解压后读取 media-workbench/SKILL.md，使用随包客户端连接。先运行 scripts/workbench.ps1 check（Windows），或 python scripts/workbench.py check。按我的目标自行决定分析方法、字段和输出形式；如果我只要求检查软件，运行 self-test 并简短说明检查状态，不创建正式研究报告。正常任务的进度与成果保存回软件。连接失败时报告实际原因。",
                 media_type="text/plain",
             )
         paths = sorted(
@@ -716,8 +722,26 @@ def make_app(root=None, *, run_queue=True):
     def backup():
         return {"path": str(db.backup())}
 
+    @app.post("/api/v1/diagnostics/self-tests")
+    def start_self_test(body: SelfTestRequest, request: Request):
+        with db.lock:
+            return write(request, body.model_dump(), lambda con: self_tests.start(body.include_network))
+
+    @app.get("/api/v1/diagnostics/self-tests/latest")
+    def latest_self_test():
+        return self_tests.view()
+
+    @app.get("/api/v1/diagnostics/self-tests/{identity}")
+    def get_self_test(identity: str):
+        return self_tests.view(identity)
+
+    @app.post("/api/v1/diagnostics/self-tests/{identity}/cancel")
+    def cancel_self_test(identity: str, request: Request):
+        return write(request, {}, lambda con: self_tests.cancel(identity))
+
     @app.post("/api/v1/host/stop")
     def stop_host():
+        self_tests.close()
         queue.stop_event.set()
         app.state.stop_requested = True
         return {"state": "stopping"}
@@ -726,6 +750,8 @@ def make_app(root=None, *, run_queue=True):
     def prepare_update():
         # Serialize against job submission and queue claims, then freeze all writes.
         with db.lock:
+            if self_tests.active():
+                raise Conflict("运行自检尚未结束，请完成或取消后安装更新。")
             if db.query(
                 "SELECT id FROM jobs WHERE state IN ('running','stopping','queued') LIMIT 1"
             ):

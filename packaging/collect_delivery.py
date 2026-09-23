@@ -13,10 +13,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--version", default="0.1.1")
+    parser.add_argument("--version", required=True)
+    parser.add_argument("--release-directory")
     parser.add_argument("--include-evidence", action="store_true")
     args = parser.parse_args()
-    release = ROOT / "release"
+    release = Path(args.release_directory) if args.release_directory else ROOT / "release" / args.version
     package = release / f"MediaWorkbench.Desktop-{args.version}-full.nupkg"
     with zipfile.ZipFile(package) as archive:
         prefix = "lib/app/"
@@ -77,6 +78,8 @@ def main():
         json.dumps(integrity, indent=2), encoding="utf-8", newline="\n"
     )
     shutil.copy2(ROOT / "docs/VALIDATION.md", release / "VALIDATION.md")
+    for source in (ROOT / "LICENSE", ROOT / "THIRD_PARTY_NOTICES.md", ROOT / "docs/RELEASE_NOTES.md"):
+        shutil.copy2(source, release / source.name)
     shutil.copy2(ROOT / "docs/RECOVERY.md", release / "RECOVERY.md")
     shutil.copy2(ROOT / "docs/LOGIN_SESSIONS.md", release / "LOGIN_SESSIONS.md")
     if args.include_evidence:

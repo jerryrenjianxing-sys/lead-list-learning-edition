@@ -18,8 +18,6 @@ using Velopack;
 
 [assembly: AssemblyTitle("Media Deep Researcher")]
 [assembly: AssemblyProduct("Media Deep Researcher")]
-[assembly: AssemblyVersion("0.1.1.0")]
-[assembly: AssemblyFileVersion("0.1.1.0")]
 internal static class Program {
     internal static readonly string Root = AppDomain.CurrentDomain.BaseDirectory;
     internal static readonly string Data = Environment.GetEnvironmentVariable("MEDIAWORKBENCH_DATA_DIR") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MediaWorkbench", "data");
@@ -52,7 +50,7 @@ internal static class Program {
     }
     internal static void Open(string target) { Process.Start(new ProcessStartInfo {FileName=target,UseShellExecute=true}); }
 }
-internal sealed class WorkbenchForm : Form {
+internal sealed partial class WorkbenchForm : Form {
     private readonly WebView2 web = new WebView2();
     private readonly Label message = new Label();
     private readonly NotifyIcon tray;
@@ -115,9 +113,11 @@ internal sealed class WorkbenchForm : Form {
             var environment=await CoreWebView2Environment.CreateAsync(null,Path.Combine(Program.Data,"webview"));
             Controls.Add(web);web.BringToFront();await web.EnsureCoreWebView2Async(environment);
             web.CoreWebView2.Settings.IsStatusBarEnabled=false;
+            InitializeUpdates();
             web.CoreWebView2.NewWindowRequested+=delegate(object sender,CoreWebView2NewWindowRequestedEventArgs e){e.Handled=true;Uri target;if(Uri.TryCreate(e.Uri,UriKind.Absolute,out target)&&(target.Scheme=="https"||target.Scheme=="http"))Program.Open(e.Uri);};
             web.CoreWebView2.NavigationStarting+=delegate(object sender,CoreWebView2NavigationStartingEventArgs e){Uri target;if(Uri.TryCreate(e.Uri,UriKind.Absolute,out target)&&target.Scheme!="about"&&!e.Uri.StartsWith((string)instance["base_url"]+"/",StringComparison.OrdinalIgnoreCase)){e.Cancel=true;if(target.Scheme=="https"||target.Scheme=="http")Program.Open(e.Uri);}};
             web.Source=new Uri((string)instance["base_url"]+"/");message.Visible=false;
+            await AutomaticUpdateCheck();
         }catch(Exception ex){message.Visible=true;message.BringToFront();message.Text="启动未完成\n\n"+ex.Message+"\n\n可从托盘打开数据目录查看日志，或退出后重新启动。";}
     }
     private void Log(object sender,DataReceivedEventArgs e){var writer=log;if(e.Data!=null&&writer!=null){lock(writer){if(log!=null)writer.WriteLine(e.Data);}}}
@@ -132,24 +132,4 @@ internal sealed class WorkbenchForm : Form {
         throw new Exception("后台尚未退出，已暂停关闭或更新。请稍候再试，数据仍保留。");
     }
     private async Task ExitApp(){if(closing)return;closing=true;try{await StopHost();exiting=true;Close();}catch(Exception ex){closing=false;MessageBox.Show(ex.Message,"Media Deep Researcher");}}
-    private async Task CheckUpdates(){
-        try {
-            if(instance==null)throw new Exception("请等待后台启动完成。");
-            string feed;
-            using(var client=Program.Client(instance)){
-                var state=Program.Json.Deserialize<Dictionary<string,object>>(await client.GetStringAsync("/api/v1/settings"));
-                feed=state.ContainsKey("update_feed")?Convert.ToString(state["update_feed"]):"";
-            }
-            if(String.IsNullOrWhiteSpace(feed)){MessageBox.Show("尚未配置发行地址。也可以下载新的完整安装包进行升级，已有数据会保留。","Media Deep Researcher");return;}
-            var manager=new UpdateManager(feed);var update=await manager.CheckForUpdatesAsync();
-            if(update==null){MessageBox.Show("当前已经是最新版本。","Media Deep Researcher");return;}
-            await manager.DownloadUpdatesAsync(update);
-            using(var client=Program.Client(instance)){
-                var response=await client.PostAsync("/api/v1/host/prepare-update",new StringContent("{}",Encoding.UTF8,"application/json"));
-                if(response.StatusCode==System.Net.HttpStatusCode.Conflict){MessageBox.Show("更新已下载。请在采集任务完成后再次检查更新以安装。","Media Deep Researcher");return;}
-                response.EnsureSuccessStatusCode();
-            }
-            await StopHost();exiting=true;tray.Visible=false;manager.ApplyUpdatesAndRestart(update);
-        }catch(Exception ex){MessageBox.Show("更新未完成，当前数据保留。\n"+ex.Message,"Media Deep Researcher");}
-    }
 }

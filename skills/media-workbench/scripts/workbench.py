@@ -175,6 +175,13 @@ def main():
     parser.add_argument("--instance")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("check")
+    self_test = commands.add_parser("self-test", help="独立运行自检，不创建正式业务成果")
+    self_test.add_argument("--local-only", action="store_true")
+    actions = self_test.add_mutually_exclusive_group()
+    actions.add_argument("--status", nargs="?", const="latest", metavar="ID")
+    actions.add_argument("--cancel", metavar="ID")
+    self_test.add_argument("--no-wait", action="store_true")
+    self_test.add_argument("--request-id")
     api = commands.add_parser("api")
     api.add_argument("method")
     api.add_argument("path")
@@ -196,6 +203,28 @@ def main():
         health = client.check()
         if args.command == "check":
             result = health
+        elif args.command == "self-test":
+            if "self_test" not in health.get("capabilities", {}).get("operations", []):
+                raise RuntimeError("当前软件不支持运行自检，请先升级到 0.2.0 或更新版本。")
+            prefix = "/api/v1/diagnostics/self-tests"
+            if args.status:
+                result = json.loads(client.send("GET", prefix + "/" + args.status))
+            elif args.cancel:
+                result = client.request("POST", prefix + "/" + args.cancel + "/cancel", b"{}", request_id=args.request_id)
+            else:
+                result = client.request("POST", prefix, json.dumps({"include_network": not args.local_only}).encode(), request_id=args.request_id)
+                deadline = time.monotonic() + 200
+                previous = None
+                while not args.no_wait and result["state"] in ("running", "cancelling"):
+                    if time.monotonic() >= deadline:
+                        output({"check_id": result["id"], "message": "等待结束，可用 self-test --status 查询同一次检查。"}, error=True)
+                        break
+                    status = [(step["id"], step["state"]) for step in result["steps"]]
+                    if status != previous:
+                        output({"check_id": result["id"], "steps": result["steps"]}, error=True)
+                        previous = status
+                    time.sleep(1)
+                    result = json.loads(client.send("GET", prefix + "/" + result["id"]))
         elif args.command == "receipt":
             result = json.loads(
                 client.send("GET", "/api/v1/requests/" + args.request_id)
@@ -247,6 +276,8 @@ def main():
                 request_id=args.request_id,
             )
         output(result)
+        if args.command == "self-test" and result and (result.get("local_state") == "failed" or result.get("state") in ("failed", "timed_out")):
+            return 2
     except Exception as exc:
         output(
             {
