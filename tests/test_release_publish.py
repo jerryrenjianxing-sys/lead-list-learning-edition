@@ -57,3 +57,60 @@ def test_release_requires_current_version_upgrade_and_cleanup(publisher):
             publisher.verify_release_checks(version, integrity, local, desktop, lifecycle, invalid)
     with pytest.raises(RuntimeError, match="deterministic validation"):
         publisher.verify_release_checks(version, {**integrity, "version": "0.2.0"}, local, desktop, lifecycle, upgrade)
+
+
+def test_created_draft_waits_for_visibility_and_reads_acknowledged_id(publisher, monkeypatch):
+    draft = {"id": 42, "tag_name": "v0.3.0", "draft": True, "assets": []}
+    resolved = {**draft, "assets": [{"name": "already-uploaded.zip"}]}
+    visibility = iter([None, None, draft])
+    monkeypatch.setattr(publisher, "find_release", lambda tag: next(visibility))
+    slept, creations = [], []
+    monkeypatch.setattr(publisher.time, "sleep", slept.append)
+    def gh(*args, input_text=None):
+        if args[:3] == ("api", "--method", "POST"):
+            assert args[-2:] == ("--input", "-")
+            payload = json.loads(input_text)
+            assert payload["tag_name"] == "v0.3.0" and payload["draft"] is True and payload["prerelease"] is True
+            assert payload["make_latest"] == "false"
+            creations.append(payload)
+            return SimpleNamespace(stdout=json.dumps(draft))
+        assert args[:2] == ("api", f"repos/{publisher.REPO}/releases/42")
+        return SimpleNamespace(stdout=json.dumps(resolved))
+    monkeypatch.setattr(publisher, "gh", gh)
+    assert publisher.create_draft("v0.3.0", "0.3.0") == resolved
+    assert len(creations) == 1 and slept == [1, 2]
+
+
+def test_delayed_draft_timeout_never_creates_a_second_release(publisher, monkeypatch):
+    draft = {"id": 42, "tag_name": "v0.3.0", "draft": True, "assets": []}
+    calls, slept = [], []
+    monkeypatch.setattr(publisher, "find_release", lambda tag: None)
+    monkeypatch.setattr(publisher.time, "sleep", slept.append)
+    def gh(*args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(stdout=json.dumps(draft))
+    monkeypatch.setattr(publisher, "gh", gh)
+    with pytest.raises(RuntimeError, match="without creating a second release"):
+        publisher.create_draft("v0.3.0", "0.3.0")
+    assert len(calls) == 1
+    assert sum(slept) == 30
+
+
+def test_visibility_cannot_switch_to_a_different_release(publisher, monkeypatch):
+    monkeypatch.setattr(publisher, "find_release", lambda tag: {"id": 43, "tag_name": tag, "draft": True})
+    with pytest.raises(RuntimeError, match="different release"):
+        publisher.wait_for_draft("v0.3.0", 42)
+
+
+def test_published_state_from_id_cannot_be_overwritten(publisher, monkeypatch):
+    draft = {"id": 42, "tag_name": "v0.3.0", "draft": True}
+    monkeypatch.setattr(publisher, "find_release", lambda tag: draft)
+    monkeypatch.setattr(publisher, "gh", lambda *args, **kwargs: SimpleNamespace(stdout=json.dumps({**draft, "draft": False})))
+    with pytest.raises(RuntimeError, match="cannot be overwritten"):
+        publisher.wait_for_draft("v0.3.0", 42)
+
+
+def test_release_by_id_rejects_mismatched_tag(publisher, monkeypatch):
+    monkeypatch.setattr(publisher, "gh", lambda *args, **kwargs: SimpleNamespace(stdout=json.dumps({"id": 42, "tag_name": "v0.2.0", "draft": True})))
+    with pytest.raises(RuntimeError, match="identity changed"):
+        publisher.release_by_id(42, "v0.3.0")

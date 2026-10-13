@@ -4,15 +4,17 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import time
 import tomllib
 from collect_delivery import full_package
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = "jerryrenjianxing-sys/lead-list-learning-edition"
+RELEASE_VISIBILITY_DELAYS = (0, 1, 2, 4, 8, 15)
 
 
-def gh(*args, ok=True):
-    result = subprocess.run(["gh", *args], cwd=ROOT, text=True, encoding="utf-8", capture_output=True)
+def gh(*args, ok=True, input_text=None):
+    result = subprocess.run(["gh", *args], cwd=ROOT, text=True, encoding="utf-8", capture_output=True, input=input_text)
     if ok and result.returncode:
         raise RuntimeError("GitHub operation failed: " + result.stderr[:600])
     return result
@@ -21,11 +23,54 @@ def gh(*args, ok=True):
 def find_release(tag):
     # GET /releases/tags/{tag} only returns published releases. List releases
     # with our write-capable token to include drafts and support failed-upload retries.
-    pages = json.loads(gh("api", "--paginate", "--slurp", f"repos/{REPO}/releases?per_page=100").stdout)
+    pages = json.loads(gh("api", "--paginate", "--slurp", f"repos/{REPO}/releases?per_page=100", "-H", "Cache-Control: no-cache").stdout)
     matches = [release for page in pages for release in page if release["tag_name"] == tag]
     if len(matches) > 1:
         raise RuntimeError("Multiple releases use this tag; refusing ambiguous publication")
     return matches[0] if matches else None
+
+
+def release_by_id(release_id, tag):
+    release = json.loads(gh("api", f"repos/{REPO}/releases/{release_id}", "-H", "Cache-Control: no-cache").stdout)
+    if release.get("id") != release_id or release.get("tag_name") != tag:
+        raise RuntimeError("Release identity changed; refusing ambiguous publication")
+    return release
+
+
+def wait_for_draft(tag, release_id):
+    # A successful create can precede release-list visibility. gh release
+    # upload also resolves the tag, so wait before starting any uploads.
+    for delay in RELEASE_VISIBILITY_DELAYS:
+        if delay:
+            time.sleep(delay)
+        listed = find_release(tag)
+        if listed is None:
+            continue
+        if listed.get("id") != release_id:
+            raise RuntimeError("A different release appeared for the tag; refusing publication")
+        release = release_by_id(release_id, tag)
+        if not release.get("draft"):
+            raise RuntimeError("Published releases cannot be overwritten")
+        return release
+    raise RuntimeError(f"Draft {release_id} did not become visible within the bounded wait; retry publication later without creating a second release")
+
+
+def create_draft(tag, version):
+    # Keep the ID from the create response instead of relying on an
+    # immediately refreshed list. POST runs once; uncertain outcomes must
+    # be recovered through find_release on the next publisher invocation.
+    payload = {
+        "tag_name": tag,
+        "name": f"Media Deep Researcher {version} 预览版",
+        "body": (ROOT / "docs/RELEASE_NOTES.md").read_text(encoding="utf-8"),
+        "draft": True,
+        "prerelease": True,
+        "make_latest": "false",
+    }
+    created = json.loads(gh("api", "--method", "POST", f"repos/{REPO}/releases", "--input", "-", input_text=json.dumps(payload, ensure_ascii=False)).stdout)
+    if type(created.get("id")) is not int or created["id"] <= 0 or created.get("tag_name") != tag or created.get("draft") is not True:
+        raise RuntimeError("Created draft response has an unexpected identity or state")
+    return wait_for_draft(tag, created["id"])
 
 
 def verify_release_checks(version, integrity, check, desktop_check, lifecycle_check, upgrade_check):
@@ -73,11 +118,11 @@ def main():
     if release is not None:
         if not release["draft"]:
             raise RuntimeError("Published releases cannot be overwritten")
+        release = release_by_id(release["id"], args.tag)
+        if not release.get("draft"):
+            raise RuntimeError("Published releases cannot be overwritten")
     else:
-        gh("release", "create", args.tag, "--repo", REPO, "--verify-tag", "--draft", "--prerelease", "--title", f"Media Deep Researcher {version} 预览版", "--notes-file", str(ROOT / "docs/RELEASE_NOTES.md"))
-        release = find_release(args.tag)
-        if release is None:
-            raise RuntimeError("Created draft is not visible; retry publication later")
+        release = create_draft(args.tag, version)
     present = {a["name"]: a for a in release["assets"]}
     for file in files:
         if file.name in present:

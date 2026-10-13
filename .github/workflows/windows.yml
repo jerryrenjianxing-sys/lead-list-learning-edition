@@ -94,6 +94,15 @@ jobs:
       - name: Verify source remained clean
         run: |
           if (git status --porcelain) { throw 'Build modified the source checkout' }
+      - name: Preserve verified release files for publication recovery
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: verified-windows-preview-${{ github.ref_name }}-${{ github.run_attempt }}
+          path: release/*/**
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
       - name: Upload, verify and publish preview
         env:
           GH_TOKEN: ${{ github.token }}
