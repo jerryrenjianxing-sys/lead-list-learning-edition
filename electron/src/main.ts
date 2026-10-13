@@ -9,7 +9,7 @@ import { DesktopUpdater, githubReleaseUrl } from './updates';
 import { DISPLAY_NAME, Paths } from './types';
 
 app.setName(DISPLAY_NAME);
-app.setAppUserModelId('MediaWorkbench.Desktop');
+app.setAppUserModelId('velopack.MediaWorkbench.Desktop');
 const root = app.isPackaged ? path.dirname(app.getPath('exe')) : path.resolve(__dirname, '..', '..');
 const local = process.env.LOCALAPPDATA || app.getPath('appData');
 const paths: Paths = {

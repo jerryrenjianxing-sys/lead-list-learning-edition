@@ -121,3 +121,34 @@ def test_cached_electron_must_match_binary_lock(tmp_path, monkeypatch):
     (tmp_path / "packaging/downloads.lock.json").write_text(json.dumps({module.NAME: {"url": "https://example.invalid/not-fetched", "sha256": "0" * 64, "size": 15}}), encoding="utf-8")
     with pytest.raises(RuntimeError, match="checksum or size"):
         module.prepare()
+
+
+def test_private_version_is_derived_without_source_mutation():
+    module = load("prepare_test_release")
+    assert module.next_patch("0.3.0") == "0.3.1"
+    assert module.next_patch("2.10.99") == "2.10.100"
+    for version in ("0.3", "v0.3.0", "0.3.0-preview", "01.3.0"):
+        with pytest.raises(ValueError):
+            module.next_patch(version)
+
+
+def test_private_fixture_cannot_replace_baseline_or_escape_build(tmp_path):
+    module = load("prepare_test_release")
+    root = tmp_path / "project"
+    stage = root / "build/MediaWorkbench"
+    stage.mkdir(parents=True)
+    assert module.fixture_paths(stage, root / ".cache/private-update", root) == (stage.resolve(), (root / ".cache/private-update").resolve())
+    for target in (stage, stage / "child", root / "build", tmp_path / "outside"):
+        with pytest.raises(RuntimeError):
+            module.fixture_paths(stage, target, root)
+
+
+def test_upgrade_public_summary_removes_local_paths():
+    module = load("collect_delivery")
+    raw = {"ok": True, "version": "0.3.0", "baseline_version": "0.2.0", "next_version": "0.3.1", "cleanup_complete": True, "checks": ["native-update"], "limitations": ["Synthetic login fixture"], "directory": "C:/private/local/test", "source": "C:/private/source"}
+    public = module.public_upgrade_summary(raw, "0.3.0")
+    assert "directory" not in public and "source" not in public
+    assert public["checks"] == ["native-update"]
+    raw["next_version"] = None
+    with pytest.raises(RuntimeError, match="private next version"):
+        module.public_upgrade_summary(raw, "0.3.0")

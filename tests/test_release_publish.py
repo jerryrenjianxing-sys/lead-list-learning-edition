@@ -41,3 +41,19 @@ def test_ambiguous_drafts_cannot_be_published(publisher, monkeypatch):
     monkeypatch.setattr(publisher, "gh", lambda *args: SimpleNamespace(stdout=json.dumps([page])))
     with pytest.raises(RuntimeError, match="Multiple releases"):
         publisher.find_release("v0.2.0")
+
+
+def test_release_requires_current_version_upgrade_and_cleanup(publisher):
+    version = "0.3.0"
+    integrity = {"version": version, "packaged_manifest_dirty": False, "desktop": {"kind": "electron"}}
+    local = {"local_state": "passed", "cleanup_complete": True}
+    desktop = {"ok": True, "version": version, "cleanup_complete": True}
+    lifecycle = {"ok": True, "version": version}
+    upgrade = {"ok": True, "version": version, "baseline_version": "0.2.0", "next_version": "0.3.1", "cleanup_complete": True}
+    publisher.verify_release_checks(version, integrity, local, desktop, lifecycle, upgrade)
+    for field, value in (("version", "0.2.0"), ("next_version", None), ("cleanup_complete", False), ("ok", False)):
+        invalid = {**upgrade, field: value}
+        with pytest.raises(RuntimeError, match="deterministic validation"):
+            publisher.verify_release_checks(version, integrity, local, desktop, lifecycle, invalid)
+    with pytest.raises(RuntimeError, match="deterministic validation"):
+        publisher.verify_release_checks(version, {**integrity, "version": "0.2.0"}, local, desktop, lifecycle, upgrade)

@@ -25,6 +25,7 @@ from .database import (
     record_view,
 )
 from .exports import export_analysis, save_artifact
+from .paths import filesystem_path
 from .models import (
     CrawlRequest,
     DatasetRequest,
@@ -674,7 +675,7 @@ def make_app(root=None, *, run_queue=True):
     def download(artifact_id: str):
         row = db.one("artifacts", artifact_id)
         return FileResponse(
-            root / row["relative_path"], media_type=row["mime"], filename=row["name"]
+            filesystem_path(root / row["relative_path"]), media_type=row["mime"], filename=row["name"]
         )
 
     @app.get("/api/v1/settings")

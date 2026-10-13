@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from .database import dump, now, uid
 from .analysis import coverage
+from .paths import filesystem_path
 
 MIMES = {
     "json": "application/json",
@@ -47,7 +48,7 @@ def save_artifact(con, root, analysis_id, name, mime, content):
     }:
         name = "_" + name
     relative = f"artifacts/{identity}/{name}"
-    destination = root / relative
+    destination = Path(filesystem_path(root / relative))
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(content)
     con.execute(

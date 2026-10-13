@@ -37,6 +37,8 @@ powershell -ExecutionPolicy Bypass -File packaging/build-windows-release.ps1 -Ta
 
 发行包含安装包、便携包、完整更新包、源码、Skill、校验值、许可、自检和桌面验证结果。GitHub Actions 拒绝版本与标签不匹配、源码被构建修改、包内文件哈希不一致或桌面/本机确定性检查失败的发布。
 
+标签构建还会下载并校验固定的 0.2.0 安装包，在隔离目录验证完整安装升级、原生完整包更新、损坏包重试及卸载保留数据。packaging/prepare_test_release.py 从干净 stage 生成仅用于验收的下一补丁版本；不修改源码版本、不创建公开标签，发布只上传脱敏验收摘要，不上传测试版本。
+
 ## 验证说明
 
 验收分别记录后台回归、Electron 原生生命周期、真实渲染与 preload、旧版升级、更新失败恢复和用户数据保留。测试环境使用独立目录、端口和协调名称，不读取个人平台凭据。

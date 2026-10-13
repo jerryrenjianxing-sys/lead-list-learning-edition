@@ -379,7 +379,10 @@ def execute(args):
         registration.restore()
         registration.verify()
     return {
-        "ok": True, "directory": str(directory), "checks": checks + ["original-shortcuts-and-registry-restored", "encrypted-synthetic-snapshot-readable", "browser-binding-path-retained", "three-analyses-fifteen-exports-retained"],
+        "ok": True, "version": args.version, "baseline_version": "0.2.0",
+        "next_version": args.next_version if args.next_package is not None else None,
+        "cleanup_complete": True,
+        "checks": checks + ["original-shortcuts-and-registry-restored", "encrypted-synthetic-snapshot-readable", "browser-binding-path-retained", "three-analyses-fifteen-exports-retained"],
         "limitations": ["Synthetic login fixture only; not proof of actual platform authentication", "Current Windows machine, not clean VM", *([] if args.next_package else ["Private next-version package not supplied; Electron-to-next update remains unverified"])],
     }
 

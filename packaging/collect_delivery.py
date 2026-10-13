@@ -37,13 +37,27 @@ def verify_desktop_manifest(manifest):
         raise RuntimeError("Obsolete desktop dependencies were included in the Electron release")
 
 
+def public_upgrade_summary(result, version):
+    prefix, patch = version.rsplit(".", 1)
+    expected_next = prefix + "." + str(int(patch) + 1)
+    if result.get("ok") is not True or result.get("version") != version or result.get("baseline_version") != "0.2.0" or result.get("next_version") != expected_next or result.get("cleanup_complete") is not True:
+        raise RuntimeError("Upgrade checks did not verify the current and private next version with cleanup")
+    # Directory, install paths, fixture files, process details and raw errors
+    # remain in the local cache; public evidence includes only test outcomes.
+    return {key: result[key] for key in ("ok", "version", "baseline_version", "next_version", "cleanup_complete", "checks", "limitations")}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--version", required=True)
     parser.add_argument("--release-directory")
     parser.add_argument("--include-evidence", action="store_true")
+    parser.add_argument("--upgrade-result", type=Path)
     args = parser.parse_args()
     release = Path(args.release_directory) if args.release_directory else ROOT / "release" / args.version
+    if args.upgrade_result:
+        result = public_upgrade_summary(json.loads(args.upgrade_result.read_text(encoding="utf-8")), args.version)
+        (release / "ELECTRON_UPGRADE_RESULT.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
     package = full_package(release, args.version)
     with zipfile.ZipFile(package) as archive:
         prefix = "lib/app/"
