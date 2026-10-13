@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const p = require('../dist/policy');
-const asset = { PackageId:'MediaWorkbench.Desktop', Version:'0.3.1', Type:'Full', FileName:'MediaWorkbench.Desktop-0.3.1-full.nupkg', Size:3, SHA256:crypto.createHash('sha256').update('abc').digest('hex') };
+const asset = { PackageId:'MediaWorkbench.Desktop', Version:'0.3.1', Type:'Full', FileName:'MediaWorkbench.Desktop-0.3.1-win-preview-full.nupkg', Size:3, SHA256:crypto.createHash('sha256').update('abc').digest('hex') };
 test('IPC origin policy accepts exact loopback authority only', () => {
   const base = 'http://127.0.0.1:48139';
   assert.equal(p.trustedSource(`${base}/#manage/settings`, base), true);
@@ -13,7 +13,7 @@ test('IPC origin policy accepts exact loopback authority only', () => {
 });
 test('update policy rejects wrong product, path, hash, channel package kind and downgrade', () => {
   assert.equal(p.acceptableAsset(asset, '0.3.0'), true);
-  for (const value of [{PackageId:'MediaFlow'}, {Type:'Delta'}, {Version:'0.2.0'}, {Version:'0.3.0'}, {Version:'0.4.0-beta'}, {FileName:'../evil-full.nupkg'}, {FileName:'C:\\evil-full.nupkg'}, {SHA256:'00'}, {Size:0}]) assert.equal(p.acceptableAsset({...asset,...value},'0.3.0'), false, JSON.stringify(value));
+  for (const value of [{PackageId:'MediaFlow'}, {Type:'Delta'}, {Version:'0.2.0'}, {Version:'0.3.0'}, {Version:'0.4.0-beta'}, {FileName:'../evil-full.nupkg'}, {FileName:'C:\\evil-full.nupkg'}, {FileName:'MediaWorkbench.Desktop-0.3.0-win-preview-full.nupkg'}, {FileName:'MediaWorkbench.Desktop-0.3.1-win-full.nupkg'}, {SHA256:'00'}, {Size:0}]) assert.equal(p.acceptableAsset({...asset,...value},'0.3.0'), false, JSON.stringify(value));
 });
 test('checksum verifies full stream and actual file length', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'mdr-update-test-'));

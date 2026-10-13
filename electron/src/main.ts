@@ -5,7 +5,7 @@ import path from 'node:path';
 import { DesktopGuard } from './guard';
 import { HostController } from './host';
 import { externalUrl, trustedSource } from './policy';
-import { DesktopUpdater, githubReleaseUrl } from './updates';
+import { DesktopUpdater, githubRelease } from './updates';
 import { DISPLAY_NAME, Paths } from './types';
 
 app.setName(DISPLAY_NAME);
@@ -88,7 +88,7 @@ async function launch(): Promise<void> {
   const icon = nativeImage.createFromPath(iconPath);
   tray = new Tray(icon);
   tray.setToolTip(`${DISPLAY_NAME} · 后台运行中`); tray.on('double-click', restore);
-  updater = new DesktopUpdater({ ...paths, manager: (url, options) => new UpdateManager(url, options), releases: () => githubReleaseUrl(paths.version),
+  updater = new DesktopUpdater({ ...paths, manager: (url, options) => new UpdateManager(url, options), releases: () => githubRelease(paths.version),
     prepare: () => host.prepareUpdate(), stop: () => host.stop(), recover: async () => { await host.stop(); await startHost(); }, exit: finishExit,
     changed: state => { if (window && !window.isDestroyed() && host.instance && trustedSource(window.webContents.getURL(), host.instance.base_url)) window.webContents.send('mdr:update:state', state); }
   });

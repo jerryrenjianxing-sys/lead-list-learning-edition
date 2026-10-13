@@ -1,7 +1,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { Asset, Instance, PACK_ID, PRODUCT } from './types';
+import { Asset, CHANNEL, Instance, PACK_ID, PRODUCT } from './types';
 
 export function localOrigin(value: string): string | undefined {
   try {
@@ -35,7 +35,7 @@ export function newerVersion(candidate: string, current: string): boolean {
   return false;
 }
 export function acceptableAsset(asset: Asset, current: string): boolean {
-  return asset?.PackageId === PACK_ID && asset.Type === 'Full' && newerVersion(asset.Version, current) && Number.isSafeInteger(asset.Size) && asset.Size > 0 && /^[a-fA-F0-9]{64}$/.test(asset.SHA256) && /^[A-Za-z0-9._-]+-full\.nupkg$/.test(asset.FileName) && !asset.FileName.includes('..');
+  return asset?.PackageId === PACK_ID && asset.Type === 'Full' && newerVersion(asset.Version, current) && Number.isSafeInteger(asset.Size) && asset.Size > 0 && /^[a-fA-F0-9]{64}$/.test(asset.SHA256) && asset.FileName === `${PACK_ID}-${asset.Version}-${CHANNEL}-full.nupkg`;
 }
 export async function verifyPackage(file: string, asset: Asset): Promise<void> {
   const stat = await fs.promises.stat(file);

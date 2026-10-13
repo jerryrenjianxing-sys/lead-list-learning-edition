@@ -8,12 +8,13 @@
 
 产品显示名为 Media Deep Researcher；内部应用标识及数据目录继续使用 MediaWorkbench，兼容已有安装、登录会话和 Skill 客户端。
 
-> 当前是 0.3.0 预览版，GitHub 标签为 `v0.3.0`。桌面迁移到 Electron，复用现有页面、后台、账号和数据；见[版本说明](docs/RELEASE_NOTES.md)及[桌面迁移说明](docs/ELECTRON_MIGRATION.md)。真实平台、独立 Agent 推理及干净 Windows 系统仍按[验证报告](docs/VALIDATION.md)逐项验收。
+> 当前是 0.3.1 预览版，GitHub 标签为 `v0.3.1`。修复 Electron 0.3.0 的软件内更新源配置，复用现有页面、后台、账号和数据；见[版本说明](docs/RELEASE_NOTES.md)及[桌面迁移说明](docs/ELECTRON_MIGRATION.md)。真实平台、独立 Agent 推理及干净 Windows 系统仍按[验证报告](docs/VALIDATION.md)逐项验收。
 
 ## 下载
 
-- [下载 Windows x64 安装包](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/download/v0.3.0/MediaWorkbench.Desktop-win-preview-Setup.exe)：包含 Electron、Python、Node 和采集浏览器，无需自行配置开发环境。
-- [新版发行页](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/tag/v0.3.0)：便携版、完整源码、Skill、更新包、校验值与验收说明。
+- [下载 Windows x64 安装包](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/download/v0.3.1/MediaWorkbench.Desktop-win-preview-Setup.exe)：包含 Electron、Python、Node 和采集浏览器，无需自行配置开发环境。
+- [新版发行页](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/tag/v0.3.1)：便携版、完整源码、Skill、更新包、校验值与验收说明。
+- [0.3.0 发行页](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/tag/v0.3.0)：保留 Electron 首版历史；其软件内更新源存在问题，请使用新版完整安装包升级。
 - [0.2.0 发行页](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/tag/v0.2.0)：保留迁移前版本及验证记录。
 - [旧版下载](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/tag/v2026.07.29)：保留 2026 年 7 月的学习版。
 
@@ -27,9 +28,9 @@
 
 要体验分析，可点击「加载演示数据」。这是合成的通勤反馈；分析目标、方法、字段、数量和输出形式由用户决定。Agent 能保存任意结构化结果、证据引用和其他文件附件。
 
-发行附件和本地 `release/0.3.0` 目录包含完整安装包 `MediaWorkbench.Desktop-win-preview-Setup.exe`、便携包、Skill ZIP、源码 ZIP 和 SHA256 校验表。系统验收目标为 Windows 10/11 x64；干净系统验收尚待完成。
+发行附件和本地 `release/0.3.1` 目录包含完整安装包 `MediaWorkbench.Desktop-win-preview-Setup.exe`、便携包、Skill ZIP、源码 ZIP 和 SHA256 校验表。系统验收目标为 Windows 10/11 x64；干净系统验收尚待完成。
 
-0.2.0 可通过原有更新通道或完整安装包升级到 Electron；0.1.1 首次使用完整安装包接入更新通道。以后在设置或托盘检查更新。自动检查最多每天一次，只提示；下载和安装分别由用户点击。采集或自检运行时暂缓安装，安装前备份数据。
+已经安装 0.3.0 的用户，请用 0.3.1 完整安装包覆盖升级一次，以修正该版本的软件内更新源；任务、数据和登录档案保留。0.2.0 可通过原有更新通道或完整安装包升级到 Electron；0.1.1 首次使用完整安装包接入更新通道。修正后在设置或托盘检查更新，自动检查最多每天一次，只提示；下载和安装分别由用户点击。采集或自检运行时暂缓安装，安装前备份数据。
 
 - 七个平台：小红书、抖音、快手、哔哩哔哩、微博、贴吧、知乎；具体能力通过接口与平台登录页展示。
 - 持久化队列：界面与 Skill 操作同一任务，刷新页面或关闭 Agent 不丢队列。

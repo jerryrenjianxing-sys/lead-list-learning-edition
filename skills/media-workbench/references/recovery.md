@@ -3,6 +3,7 @@
 - `check` 找不到实例：启动Media Deep Researcher后重试。默认发现文件为 `%LOCALAPPDATA%/MediaWorkbench/instance.json`；可用 `--instance FILE` 指定。文件内有本机访问凭据，不放入报告或公开仓库。
 - Electron 桌面提示旧版本后台仍在运行：在旧版托盘选择“退出并保存进度”，等待退出后重开新版。软件内更新在任务和自检空闲时安装；不使用强制结束、删除数据或重复启动后台来解决版本冲突。
 - 0.2.0 → 0.3.0 可使用同产品完整安装包升级，也可通过现有软件更新通道。账号、任务和数据沿用原目录；桌面缓存变化不会替换平台的专用浏览器档案。
+- 0.3.0 的软件内更新源存在配置错误，检查或下载新版可能失败。已经安装该版时，使用 0.3.1 完整安装包覆盖升级一次，保留账号、任务和数据，随后使用修正的软件内更新。不要删除实例文件或登录档案来修复此问题；API 连接和已有研究任务继续使用原客户端命令。
 - Windows PowerShell 入口直接使用软件携带的 Python。Hermes 若在同一电脑的 WSL，可通过 `powershell.exe -NoProfile -File <Windows路径> check` 使用 Windows 入口；纯云端 Agent 无法直接访问用户电脑的 localhost。
 - 请求超时：保留客户端输出的 request_id，执行 `receipt ID`。已登记时使用原响应；未登记时用相同 request_id 和原请求内容重试。改变请求内容必须换编号。
 - job interrupted/cancelled/partial/failed：先读 events 和 checkpoint，修复实际原因，再 resume。保存的数据会去重；通用采集恢复会重新经过部分已抓页面，不宣称所有平台都有精确游标续跑。

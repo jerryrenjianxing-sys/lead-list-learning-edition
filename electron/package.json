@@ -12,7 +12,8 @@
     "test": "npm run build && node --test tests/*.test.cjs",
     "package": "npm run build && node scripts/package.cjs",
     "start": "npm run build && electron .",
-    "smoke": "node tests/smoke.cjs"
+    "smoke": "node tests/smoke.cjs",
+    "update-smoke": "node tests/update-smoke.cjs"
   },
   "dependencies": { "velopack": "1.2.0" },
   "devDependencies": {

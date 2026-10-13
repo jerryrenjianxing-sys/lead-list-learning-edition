@@ -1,7 +1,7 @@
 [project]
 name = "mediaworkbench"
 author = "程序员阿江-Relakkes <relakkes@gmail.com>"
-version = "0.3.0"
+version = "0.3.1"
 description = "A social media crawler project, support Xiaohongshu, Weibo, Zhihu, Bilibili, Douyin, BaiduTieBa etc."
 readme = "README.md"
 requires-python = ">=3.11"

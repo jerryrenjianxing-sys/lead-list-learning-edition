@@ -126,6 +126,7 @@ def test_cached_electron_must_match_binary_lock(tmp_path, monkeypatch):
 def test_private_version_is_derived_without_source_mutation():
     module = load("prepare_test_release")
     assert module.next_patch("0.3.0") == "0.3.1"
+    assert module.next_patch("0.3.1") == "0.3.2"
     assert module.next_patch("2.10.99") == "2.10.100"
     for version in ("0.3", "v0.3.0", "0.3.0-preview", "01.3.0"):
         with pytest.raises(ValueError):
@@ -152,3 +153,18 @@ def test_upgrade_public_summary_removes_local_paths():
     raw["next_version"] = None
     with pytest.raises(RuntimeError, match="private next version"):
         module.public_upgrade_summary(raw, "0.3.0")
+
+
+def test_native_update_summary_requires_current_patch_and_cleanup():
+    module = load("collect_delivery")
+    raw = {"ok": True, "version": "0.3.1", "next_version": "0.3.2", "cleanup_complete": True, "implementation_override": False, "checks": ["actual-native-check", "actual-native-copy"], "limitations": ["Private loopback HTTP fixture"], "install_directory": "C:/private/installation", "package": "C:/private/next.nupkg"}
+    public = module.public_native_update_summary(raw, "0.3.1")
+    assert "install_directory" not in public and "package" not in public
+    assert public["version"] == "0.3.1" and public["next_version"] == "0.3.2"
+    assert public["implementation_override"] is False
+    for field, value in (("version", "0.3.0"), ("next_version", "0.3.1"), ("cleanup_complete", False), ("ok", False), ("implementation_override", True)):
+        with pytest.raises(RuntimeError, match="Native updater"):
+            module.public_native_update_summary({**raw, field: value}, "0.3.1")
+    without_override = {key: value for key, value in raw.items() if key != "implementation_override"}
+    with pytest.raises(RuntimeError, match="Native updater"):
+        module.public_native_update_summary(without_override, "0.3.1")

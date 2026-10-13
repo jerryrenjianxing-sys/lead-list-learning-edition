@@ -2,7 +2,7 @@
 
 ## 版本与边界
 
-0.3.0 面向 Windows 10/11 x64。桌面使用 Electron 44.7.0、Electron Forge 8.0.1、Velopack 1.2.0，源码版本由 pyproject.toml 决定；依赖和官方二进制下载固定版本及哈希。
+0.3.1 面向 Windows 10/11 x64，修正 0.3.0 的软件内更新源。桌面使用 Electron 44.7.0、Electron Forge 8.0.1、Velopack 1.2.0，源码版本由 pyproject.toml 决定；依赖和官方二进制下载固定版本及哈希。
 
 页面继续使用 React/Vite，由现有 FastAPI 后台在本机提供。正式采集、登录保存和通用分析继续使用同一套 API。平台登录浏览器独立于 Electron 桌面浏览器。
 
@@ -13,6 +13,10 @@
 默认数据目录为 `%LOCALAPPDATA%/MediaWorkbench/data`，发现文件为 `%LOCALAPPDATA%/MediaWorkbench/instance.json`。MEDIAWORKBENCH_DATA_DIR 和 MEDIAWORKBENCH_INSTANCE 继续有效。Electron 自身页面缓存与账号浏览器档案分开；卸载不主动删除业务数据。
 
 0.2.0 可通过软件更新或完整安装包升级。本轮没有数据库结构迁移；安装前仍执行数据库备份。账号若已被平台判定失效，需要按正常登录流程验证，桌面迁移不延长平台会话有效期。
+
+0.3.0 的原生 SDK 更新源把 GitHub 仓库地址解析为目录地址，并过滤预览发行；软件自己的检查和下载因此可能失败。0.3.0 的公开产物保持原样，使用 0.3.1 完整安装包覆盖升级一次后恢复软件内更新。已通过的完整安装及 Update.exe 直接应用验收仍有效，其范围不包含这条失败的 SDK 更新源路径。
+
+0.3.1 从正式 GitHub HTTPS 发行验证 win-preview 完整包，流式下载并核对大小和 SHA256，再把已验证的清单和文件交给本地 FileSource。Velopack 原生 SDK 负责检查、复制安装缓存及应用；不会把仓库 URL 交给 SDK 自动推断来源。
 
 ## 生命周期与接口
 
@@ -32,15 +36,17 @@ npm.cmd --prefix webui ci
 npm.cmd --prefix webui run build
 npm.cmd --prefix electron ci
 npm.cmd --prefix electron test
-powershell -ExecutionPolicy Bypass -File packaging/build-windows-release.ps1 -Tag v0.3.0
+powershell -ExecutionPolicy Bypass -File packaging/build-windows-release.ps1 -Tag v0.3.1
 ```
 
 发行包含安装包、便携包、完整更新包、源码、Skill、校验值、许可、自检和桌面验证结果。GitHub Actions 拒绝版本与标签不匹配、源码被构建修改、包内文件哈希不一致或桌面/本机确定性检查失败的发布。
 
 标签构建还会下载并校验固定的 0.2.0 安装包，在隔离目录验证完整安装升级、原生完整包更新、损坏包重试及卸载保留数据。packaging/prepare_test_release.py 从干净 stage 生成仅用于验收的下一补丁版本；不修改源码版本、不创建公开标签，发布只上传脱敏验收摘要，不上传测试版本。
 
+发布前还须通过真实 `.node` 更新器验收，使用隔离安装和私有下一版本（本轮 0.3.2），执行软件的更新检查、下载及安装缓存复制流程；结果写入 ELECTRON_NATIVE_UPDATE_RESULT.json，失败时不发布。更新源或网络的替身不能代替原生模块调用。
+
 ## 验证说明
 
 验收分别记录后台回归、Electron 原生生命周期、真实渲染与 preload、旧版升级、更新失败恢复和用户数据保留。测试环境使用独立目录、端口和协调名称，不读取个人平台凭据。
 
-实际结果以发行附件 ELECTRON_TEST_RESULT.json、SELF_TEST_RESULT.json 及 VALIDATION.md 为准。当前机器的安装验证不代替干净 Windows 10/11、全部显示缩放组合、跨天登录或七平台真实采集矩阵。macOS/Linux 本轮没有发行。
+实际结果以发行附件 ELECTRON_TEST_RESULT.json、ELECTRON_NATIVE_UPDATE_RESULT.json、ELECTRON_UPGRADE_RESULT.json、SELF_TEST_RESULT.json 及 VALIDATION.md 为准。当前机器的安装验证不代替干净 Windows 10/11、全部显示缩放组合、跨天登录或七平台真实采集矩阵。macOS/Linux 本轮没有发行。
