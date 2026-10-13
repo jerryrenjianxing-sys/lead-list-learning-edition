@@ -1,0 +1,26 @@
+{
+  "name": "media-deep-researcher-desktop",
+  "productName": "Media Deep Researcher",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Media Deep Researcher Electron desktop host",
+  "author": "Media Deep Researcher contributors",
+  "license": "SEE LICENSE IN ../LICENSE",
+  "main": "dist/entry.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test tests/*.test.cjs",
+    "package": "npm run build && node scripts/package.cjs",
+    "start": "npm run build && electron .",
+    "smoke": "node tests/smoke.cjs"
+  },
+  "dependencies": { "velopack": "1.2.0" },
+  "devDependencies": {
+    "@electron-forge/cli": "8.0.1",
+    "@electron-forge/core": "8.0.1",
+    "@types/node": "22.18.8",
+    "electron": "44.7.0",
+    "typescript": "5.9.3",
+    "playwright": "1.61.0"
+  }
+}

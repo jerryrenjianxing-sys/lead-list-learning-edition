@@ -22,6 +22,21 @@ def full_package(release, version):
     return release / name
 
 
+def verify_desktop_manifest(manifest):
+    desktop = manifest.get("desktop", {})
+    if desktop.get("kind") != "electron" or desktop.get("version") != manifest["version"]:
+        raise RuntimeError("Desktop shell and backend versions must agree")
+    if desktop.get("source_revision") != manifest.get("source_revision") or desktop.get("source_dirty") is not False:
+        raise RuntimeError("Desktop shell was not built from the clean packaged source revision")
+    files = manifest["files"]
+    required = {"MediaWorkbench.exe", "resources/app.asar", "licenses/Electron-LICENSE.txt", "licenses/Chromium-LICENSES.html"}
+    if not required <= files.keys() or not any(name.startswith("resources/app.asar.unpacked/") and name.endswith(".node") for name in files):
+        raise RuntimeError("Electron shell, native updater or runtime notices are missing")
+    obsolete = {"WebView2Loader.dll", "Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll", "Newtonsoft.Json.dll", "Velopack.dll", "runtime/WebView2RuntimeInstallerX64.exe"}
+    if obsolete & files.keys():
+        raise RuntimeError("Obsolete desktop dependencies were included in the Electron release")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--version", required=True)
@@ -46,7 +61,10 @@ def main():
             raise RuntimeError(
                 "Rebuild from a clean, matching source revision before collecting delivery files"
             )
+        verify_desktop_manifest(manifest)
         for name, expected in manifest["files"].items():
+            if archive.getinfo(prefix + name).file_size != expected["size"]:
+                raise RuntimeError("Packaged file size mismatch: " + name)
             with archive.open(prefix + name) as content:
                 actual = hashlib.file_digest(content, "sha256").hexdigest()
             if actual != expected["sha256"]:
@@ -75,6 +93,12 @@ def main():
         cwd=ROOT,
         check=True,
     )
+    with zipfile.ZipFile(release / f"MediaWorkbench-{args.version}-Source.zip") as source:
+        prefix = f"MediaWorkbench-{args.version}/"
+        names = set(source.namelist())
+        required = {prefix + "electron/package.json", prefix + "electron/package-lock.json", prefix + "packaging/build-electron.ps1"}
+        if not required <= names:
+            raise RuntimeError("Source archive is missing the Electron desktop or locked build")
     revision = (
         subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT).decode().strip()
     )
@@ -84,6 +108,8 @@ def main():
         "packaged_manifest_revision": manifest["source_revision"],
         "packaged_manifest_dirty": manifest["source_dirty"],
         "version": args.version,
+        "desktop": manifest["desktop"],
+        "runtime": {"python": manifest["python"], "node": manifest["node"]},
     }
     (release / "build-integrity.json").write_text(
         json.dumps(integrity, indent=2), encoding="utf-8", newline="\n"
@@ -93,6 +119,7 @@ def main():
         shutil.copy2(source, release / source.name)
     shutil.copy2(ROOT / "docs/RECOVERY.md", release / "RECOVERY.md")
     shutil.copy2(ROOT / "docs/LOGIN_SESSIONS.md", release / "LOGIN_SESSIONS.md")
+    shutil.copy2(ROOT / "docs/ELECTRON_MIGRATION.md", release / "ELECTRON_MIGRATION.md")
     if args.include_evidence:
         evidence = release / "test-evidence"
         evidence.mkdir(exist_ok=True)

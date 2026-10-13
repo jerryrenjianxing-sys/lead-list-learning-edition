@@ -13,6 +13,8 @@ Windows 首先运行本 Skill 目录中的 `scripts/workbench.ps1 check`。该�
 
 成功返回产品、版本和能力。随后用客户端 `api METHOD /api/v1/... --json-file request.json` 调用接口。写请求自动保存请求编号和回执；网络中断后用相同 `--request-id` 恢复，或用 `receipt REQUEST_ID` 查结果。请求文件使用 UTF-8。
 
+0.3.0 起桌面使用 Electron；连接地址、客户端命令及数据目录保持兼容。关闭窗口会进入托盘，后台继续运行；明确退出请使用托盘的“退出并保存进度”。桌面启动提示旧后台版本不匹配时，先正常退出旧版再重开，不要删除实例文件或登录档案。
+
 按需要读取 [接口与分析流程](references/api.md)；连接失败、任务中断或更换会话时读取 [恢复说明](references/recovery.md)。实时请求结构可通过客户端 `api GET /openapi.json` 查询。
 
 ## 运行自检（按需）

@@ -55,7 +55,9 @@ def install_app():
     app = install / "current"
     assert (app / "MediaWorkbench.exe").is_file()
     assert (app / "runtime/python/python.exe").is_file()
-    assert (app / "runtime/WebView2RuntimeInstallerX64.exe").stat().st_size > 50_000_000
+    assert (app / "resources/app.asar").is_file()
+    assert list((app / "resources/app.asar.unpacked").rglob("*.node"))
+    assert not (app / "runtime/WebView2RuntimeInstallerX64.exe").exists()
     return app
 
 
@@ -151,7 +153,7 @@ report = {
         "uninstall-retains-user-data",
         "reinstall-retains-analyses",
     ],
-    "limitation": "Current Windows with existing WebView2; no clean VM, offline network isolation, or cross-version update validation.",
+    "limitation": "Current Windows machine; no clean VM, offline network isolation, or cross-version update validation.",
 }
 (root / "release/installer-validation.json").write_text(
     json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"

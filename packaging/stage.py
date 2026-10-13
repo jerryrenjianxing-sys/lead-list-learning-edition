@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import tomllib
 import urllib.request
@@ -15,6 +16,87 @@ ROOT = Path(__file__).resolve().parents[1]
 CACHE = ROOT / "packaging" / "cache"
 LOCK = ROOT / "packaging" / "downloads.lock.json"
 STAGE = ROOT / "build" / "MediaWorkbench"
+SHELL = ROOT / "build" / "electron" / "MediaWorkbench-win32-x64"
+
+
+def digest_file(path):
+    with Path(path).open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def shell_versions(root=ROOT):
+    lock = json.loads((root / "electron/package-lock.json").read_text(encoding="utf-8"))
+    packages = lock["packages"]
+    versions = {
+        "electron": packages["node_modules/electron"]["version"],
+        "forge": packages["node_modules/@electron-forge/cli"]["version"],
+        "velopack": packages["node_modules/velopack"]["version"],
+    }
+    if versions != {"electron": "44.7.0", "forge": "8.0.1", "velopack": "1.2.0"}:
+        raise RuntimeError("Desktop dependency versions differ from the release contract")
+    return versions
+
+
+def validate_shell(shell, version, versions, cache=CACHE):
+    shell = Path(shell)
+    receipt = json.loads((shell.parent / "build-shell.json").read_text(encoding="utf-8"))
+    expected = {"version": version, "platform": "win32", "arch": "x64", **versions}
+    if any(receipt.get(key) != value for key, value in expected.items()):
+        raise RuntimeError("Forge shell version or architecture differs from source")
+    for name in ("MediaWorkbench.exe", "resources/app.asar", "LICENSE", "LICENSES.chromium.html"):
+        if not (shell / name).is_file():
+            raise RuntimeError("Missing Electron shell file: " + name)
+    if not list((shell / "resources/app.asar.unpacked").rglob("*.node")):
+        raise RuntimeError("Native updater module must be unpacked outside app.asar")
+    # Forge changes executable branding; Chromium payloads must retain the
+    # exact bytes of the separately checksum-verified official distribution.
+    archive = cache / f"electron-v{versions['electron']}-win32-x64.zip"
+    with zipfile.ZipFile(archive) as distribution:
+        for name in ("icudtl.dat", "resources.pak", "chrome_100_percent.pak", "chrome_200_percent.pak", "LICENSE", "LICENSES.chromium.html"):
+            with distribution.open(name) as stream:
+                expected_hash = hashlib.file_digest(stream, "sha256").hexdigest()
+            if digest_file(shell / name) != expected_hash:
+                raise RuntimeError("Electron runtime differs from locked distribution: " + name)
+    return receipt
+
+
+def bind_shell_source(receipt, revision, dirty):
+    if receipt.get("source_revision") != revision or receipt.get("source_dirty") is not dirty:
+        raise RuntimeError("Forge shell was built from a different source checkout; rebuild Electron")
+
+
+def merge_shell(shell, stage, notices):
+    """Retain the upstream project license while merging the full desktop tree."""
+    stage, notices = Path(stage), Path(notices)
+    notices.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(Path(shell) / "LICENSE", notices / "Electron-LICENSE.txt")
+    shutil.copy2(Path(shell) / "LICENSES.chromium.html", notices / "Chromium-LICENSES.html")
+    for source in Path(shell).iterdir():
+        if source.name == "LICENSE":
+            continue
+        target = stage / source.name
+        if source.is_dir():
+            shutil.copytree(source, target, dirs_exist_ok=True)
+        else:
+            shutil.copy2(source, target)
+
+
+def npm_notices(package_root, notices):
+    """Ship notices for bundled production dependencies, including transitives."""
+    lock = json.loads((package_root / "package-lock.json").read_text(encoding="utf-8"))
+    for relative, package in lock["packages"].items():
+        if not relative or package.get("dev"):
+            continue
+        package_dir = package_root / relative
+        if not package_dir.is_dir():
+            if package.get("optional"):
+                continue
+            raise RuntimeError("Bundled npm dependency is missing: " + relative)
+        target = notices / relative.removeprefix("node_modules/")
+        target.mkdir(parents=True, exist_ok=True)
+        for file in package_dir.iterdir():
+            if file.is_file() and (file.name.lower().startswith(("license", "licence", "notice", "copying")) or file.name in ("package.json", "README.md")):
+                shutil.copy2(file, target / file.name)
 
 
 def run(*args, **kwargs):
@@ -23,8 +105,22 @@ def run(*args, **kwargs):
 
 def main():
     CACHE.mkdir(parents=True, exist_ok=True)
+    version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+    desktop_versions = shell_versions()
+    # Verify before clearing the previous staging output, and never stage
+    # a legacy shell if a Forge build is missing or stale.
+    from importlib.util import module_from_spec, spec_from_file_location
+
+    specification = spec_from_file_location("bootstrap_electron", ROOT / "packaging/bootstrap-electron.py")
+    bootstrap = module_from_spec(specification)
+    specification.loader.exec_module(bootstrap)
+    bootstrap.prepare()
+    desktop_receipt = validate_shell(SHELL, version, desktop_versions)
+    source_revision = run("git", "rev-parse", "HEAD").decode().strip()
+    source_dirty = bool(run("git", "status", "--porcelain").strip())
+    bind_shell_source(desktop_receipt, source_revision, source_dirty)
     if STAGE.exists():
-        if STAGE.is_symlink() or not STAGE.resolve().is_relative_to((ROOT / "build").resolve()):
+        if STAGE.is_symlink() or (getattr(STAGE.stat(), "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT) or not STAGE.resolve().is_relative_to((ROOT / "build").resolve()):
             raise RuntimeError("Unexpected staging directory")
         shutil.rmtree(STAGE)
     STAGE.mkdir(parents=True, exist_ok=True)
@@ -44,13 +140,15 @@ def main():
                 shutil.copyfileobj(response, output)
                 url = response.geturl()
             path.with_suffix(path.suffix + ".part").replace(path)
-        actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        actual = digest_file(path)
         if expected or previous.get("sha256"):
             assert actual == (expected or previous["sha256"]), (
                 f"Checksum mismatch: {name}"
             )
         if not previous or actual != previous.get("sha256"):
             raise RuntimeError("Release downloads must already exist in downloads.lock.json: " + name)
+        if path.stat().st_size != previous["size"]:
+            raise RuntimeError("Release download size mismatch: " + name)
         return path
 
     ignore = shutil.ignore_patterns(
@@ -91,33 +189,18 @@ def main():
         "LOGIN_SESSIONS.md",
         "PUBLIC_PREVIEW.md",
         "RELEASE_NOTES.md",
+        "ELECTRON_MIGRATION.md",
     ):
         for file in (ROOT / "docs").glob(pattern):
             shutil.copy2(file, STAGE / "docs" / file.name)
-    for file in (ROOT / "build" / "launcher").iterdir():
-        if file.is_file() and file.suffix.lower() in (".exe", ".dll"):
-            shutil.copy2(file, STAGE / file.name)
     notices = STAGE / "licenses"
     notices.mkdir(exist_ok=True)
-    for source, target in (
-        (CACHE / "webview-sdk/LICENSE.txt", "WebView2-LICENSE.txt"),
-        (CACHE / "webview-sdk/NOTICE.txt", "WebView2-NOTICE.txt"),
-        (CACHE / "json-sdk/LICENSE.md", "Newtonsoft.Json-LICENSE.md"),
-        (ROOT / "packaging/licenses/Velopack-LICENSE.txt", "Velopack-LICENSE.txt"),
-    ):
-        shutil.copy2(source, notices / target)
+    merge_shell(SHELL, STAGE, notices)
+    shutil.copy2(ROOT / "packaging/licenses/Velopack-LICENSE.txt", notices / "Velopack-LICENSE.txt")
     runtime = STAGE / "runtime"
     # Vite bundles runtime dependencies; ship their original notices too.
-    frontend_lock = json.loads((ROOT / "webui/package-lock.json").read_text(encoding="utf-8"))
-    for relative, package in frontend_lock["packages"].items():
-        if not relative or package.get("dev"):
-            continue
-        package_dir = ROOT / "webui" / relative
-        target = notices / "frontend" / relative.removeprefix("node_modules/")
-        target.mkdir(parents=True, exist_ok=True)
-        for file in package_dir.iterdir():
-            if file.is_file() and (file.name.lower().startswith(("license", "licence", "notice", "copying")) or file.name in ("package.json", "README.md")):
-                shutil.copy2(file, target / file.name)
+    npm_notices(ROOT / "webui", notices / "frontend")
+    npm_notices(ROOT / "electron", notices / "electron")
     runtime.mkdir(exist_ok=True)
     python = Path(
         run("uv", "python", "find", "--system", "--managed-python", "3.11.16")
@@ -207,15 +290,6 @@ def main():
         cwd=ROOT,
         check=True,
     )
-    webview = fetch(
-        "WebView2RuntimeInstallerX64.exe",
-        "https://go.microsoft.com/fwlink/?LinkId=2124701",
-    )
-    if webview.stat().st_size < 50_000_000:
-        raise RuntimeError(
-            "An offline WebView2 installer is required, not the small online bootstrapper"
-        )
-    shutil.copy2(webview, runtime / webview.name)
     # Media downloads are disabled. Clear the obsolete runtime from reused
     # staging folders without following a path outside this build directory.
     obsolete_ffmpeg = (runtime / "ffmpeg").resolve()
@@ -223,17 +297,17 @@ def main():
         raise RuntimeError("Unexpected FFmpeg staging path")
     if obsolete_ffmpeg.exists():
         shutil.rmtree(obsolete_ffmpeg)
-    version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
-    (STAGE / "build-version.json").write_text(json.dumps({"version": version, "channel": "win-preview"}), encoding="utf-8")
+    (STAGE / "build-version.json").write_text(json.dumps({"version": version, "channel": "win-preview", "desktop": "electron"}), encoding="utf-8")
     manifest = {
         "product": "MediaWorkbench",
         "version": version,
         "python": "3.11.16",
         "node": "22.22.3",
+        "desktop": {"kind": "electron", **desktop_receipt},
         "upstream": "380b426000aac3d612837ed72c99808347dc94c9",
         "build_time": datetime.now(timezone.utc).isoformat(),
-        "source_revision": run("git", "rev-parse", "HEAD").decode().strip(),
-        "source_dirty": bool(run("git", "status", "--porcelain").strip()),
+        "source_revision": source_revision,
+        "source_dirty": source_dirty,
         "downloads": locked,
         "files": {},
     }
@@ -241,8 +315,10 @@ def main():
         if file.is_file() and file.name != "build-manifest.json":
             manifest["files"][file.relative_to(STAGE).as_posix()] = {
                 "size": file.stat().st_size,
-                "sha256": hashlib.sha256(file.read_bytes()).hexdigest(),
+                "sha256": digest_file(file),
             }
+    if run("git", "rev-parse", "HEAD").decode().strip() != source_revision or bool(run("git", "status", "--porcelain").strip()) != source_dirty:
+        raise RuntimeError("Source checkout changed while staging; rebuild before release")
     (STAGE / "build-manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
     )

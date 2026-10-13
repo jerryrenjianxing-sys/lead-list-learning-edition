@@ -8,12 +8,13 @@
 
 产品显示名为 Media Deep Researcher；内部应用标识及数据目录继续使用 MediaWorkbench，兼容已有安装、登录会话和 Skill 客户端。
 
-> 当前是 0.2.0 预览版，GitHub 标签为 `v0.2.0`。新增独立运行自检及 GitHub 软件内升级；见[版本说明](docs/RELEASE_NOTES.md)。真实平台、独立 Agent 推理及干净 Windows 系统仍按[验证报告](docs/VALIDATION.md)逐项验收。
+> 当前是 0.3.0 预览版，GitHub 标签为 `v0.3.0`。桌面迁移到 Electron，复用现有页面、后台、账号和数据；见[版本说明](docs/RELEASE_NOTES.md)及[桌面迁移说明](docs/ELECTRON_MIGRATION.md)。真实平台、独立 Agent 推理及干净 Windows 系统仍按[验证报告](docs/VALIDATION.md)逐项验收。
 
 ## 下载
 
-- [下载 Windows x64 安装包](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/download/v0.2.0/MediaWorkbench.Desktop-win-preview-Setup.exe)：包含 Python、Node、采集浏览器与 WebView2 离线安装程序，无需自行配置开发环境。
-- [新版发行页](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/tag/v0.2.0)：便携版、完整源码、Skill、更新包、校验值与验收说明。
+- [下载 Windows x64 安装包](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/download/v0.3.0/MediaWorkbench.Desktop-win-preview-Setup.exe)：包含 Electron、Python、Node 和采集浏览器，无需自行配置开发环境。
+- [新版发行页](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/tag/v0.3.0)：便携版、完整源码、Skill、更新包、校验值与验收说明。
+- [0.2.0 发行页](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/tag/v0.2.0)：保留迁移前版本及验证记录。
 - [旧版下载](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/tag/v2026.07.29)：保留 2026 年 7 月的学习版。
 
 普通使用者下载安装包；GitHub 的 **Code → Download ZIP** 提供开发源码。安装新版不会自动导入 7 月旧版的采集文件，可在任务台按需导入。
@@ -26,9 +27,9 @@
 
 要体验分析，可点击「加载演示数据」。这是合成的通勤反馈；分析目标、方法、字段、数量和输出形式由用户决定。Agent 能保存任意结构化结果、证据引用和其他文件附件。
 
-发行附件和本地 `release/0.2.0` 目录包含完整安装包 `MediaWorkbench.Desktop-win-preview-Setup.exe`、便携包、Skill ZIP、源码 ZIP 和 SHA256 校验表。系统验收目标为 Windows 10/11 x64；干净系统验收尚待完成。
+发行附件和本地 `release/0.3.0` 目录包含完整安装包 `MediaWorkbench.Desktop-win-preview-Setup.exe`、便携包、Skill ZIP、源码 ZIP 和 SHA256 校验表。系统验收目标为 Windows 10/11 x64；干净系统验收尚待完成。
 
-0.1.1 首次运行新版完整安装包接入更新通道；以后在设置或托盘检查更新。自动检查最多每天一次，只提示；下载和安装分别由用户点击。采集或自检运行时暂缓安装，安装前备份数据。
+0.2.0 可通过原有更新通道或完整安装包升级到 Electron；0.1.1 首次使用完整安装包接入更新通道。以后在设置或托盘检查更新。自动检查最多每天一次，只提示；下载和安装分别由用户点击。采集或自检运行时暂缓安装，安装前备份数据。
 
 - 七个平台：小红书、抖音、快手、哔哩哔哩、微博、贴吧、知乎；具体能力通过接口与平台登录页展示。
 - 持久化队列：界面与 Skill 操作同一任务，刷新页面或关闭 Agent 不丢队列。
@@ -36,7 +37,7 @@
 - 采集保存内容、评论和公开资料，不下载图片或视频文件；旧任务恢复也遵循此规则。
 - 通用分析：固定数据快照、批次进度、证据引用、处理覆盖率与幂等提交。
 - 导出：JSON、CSV、Excel、Word、Markdown；其他文件作为成果附件。
-- Windows：单实例、托盘、关闭窗口后后台继续运行、Velopack 安装与更新。
+- Windows：Electron 桌面、单实例、托盘、关闭窗口后后台继续运行、Velopack 安装与更新。
 - 程序与数据分开：默认数据位于 %LOCALAPPDATA%/MediaWorkbench/data；卸载不主动删除此目录。
 
 ## 开发
@@ -48,6 +49,8 @@ uv python install 3.11.16
 uv sync --locked --python 3.11.16
 npm.cmd --prefix webui ci
 npm.cmd --prefix webui run build
+npm.cmd --prefix electron ci
+npm.cmd --prefix electron test
 uv run python -m workbench
 ```
 
@@ -58,13 +61,13 @@ uv run python -m pytest tests -q
 powershell -ExecutionPolicy Bypass -File packaging/build-windows-release.ps1
 ```
 
-完整包从 python-build-standalone 提供的 Python 3.11.16、锁定的 Python wheels、Node.js 22.22.3、Playwright Chromium 和官方 WebView2 离线安装程序构建。构建脚本会校验已锁定下载的 SHA256。应用不下载媒体，不再分发独立 FFmpeg/FFprobe 程序。Windows 壳使用系统 C# 编译器、WebView2 SDK 与 Velopack SDK，无需安装 Python/Node 到用户系统。
+完整包使用 Electron 44.7.0、Forge 8.0.1、Velopack 1.2.0，以及 python-build-standalone 提供的 Python 3.11.16、锁定的 Python wheels、Node.js 22.22.3 和 Playwright Chromium。构建脚本校验已锁定下载的 SHA256。Electron 自带的 Node/Chromium 用于桌面，采集继续使用独立运行时与专用账号档案。使用者无需安装 Python、Node、WebView2 或 .NET Framework；构建机仍需打包工具。应用不下载媒体，不分发独立 FFmpeg/FFprobe。
 
 版本唯一来源为 `pyproject.toml`。公开 `main` 提交触发检查；`v版本号` 标签触发 Windows 构建、自检及 GitHub 草稿上传。全部附件校验通过后才公开预览发行，标签与源码版本不一致时拒绝发布。`win-preview` 通道用于本阶段预览版本，已公开的同版本文件不覆盖。
 
 ## 架构
 
-用户 Agent → Skill 客户端 → FastAPI /api/v1 → SQLite 任务/数据/分析 → 七平台采集子进程。桌面页面使用同一 API；写请求有事务内回执，网络重试可按相同请求编号查询结果。
+用户 Agent → Skill 客户端 → FastAPI /api/v1 → SQLite 任务/数据/分析 → 七平台采集子进程。Electron 主进程管理窗口、托盘、后台生命周期及更新；页面使用同一 API。隔离 preload 只提供受限更新操作；写请求有事务内回执，网络重试可按相同请求编号查询结果。
 
 采集在后台运行；分析推理由外部 Agent 完成，Agent 离线时保存进度并等待继续。通用采集恢复采用重新请求与数据去重，不能把它等同于所有平台都支持精确远端游标恢复。
 
@@ -80,4 +83,4 @@ Skill 内置[可选潜客模板](skills/media-workbench/references/lead-analysis
 
 基于 [MediaCrawler](https://github.com/NanmiCoder/MediaCrawler)，保留其 NON-COMMERCIAL LEARNING LICENSE 1.1。首页复用用户自己的 MediaFlow；Skill 结构借鉴 Hermes ComfyUI。详见 [第三方说明](THIRD_PARTY_NOTICES.md)、[升级记录](docs/UPGRADE_STATUS.md)和 [上游原始说明](docs/UPSTREAM_README.md)。本项目不声称拥有各平台与 Agent 商标。
 
-仓库地址：[jerryrenjianxing-sys/lead-list-learning-edition](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition)。预览版手动下载安装更新，自动更新源尚未启用。真实采集数据、Cookie、浏览器会话、访问凭据和构建缓存不进入仓库或发行包。
+仓库地址：[jerryrenjianxing-sys/lead-list-learning-edition](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition)。预览版通过 GitHub 检查更新，下载及安装由用户点击。真实采集数据、Cookie、浏览器会话、访问凭据和构建缓存不进入仓库或发行包。

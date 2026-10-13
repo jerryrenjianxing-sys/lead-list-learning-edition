@@ -30,8 +30,8 @@ jobs:
       - run: .venv/Scripts/python.exe -m pytest tests -q
       - run: npm.cmd --prefix webui ci --no-audit --no-fund
       - run: npm.cmd --prefix webui run build
-      - run: ./packaging/build-launcher.ps1
-      - run: ./packaging/test-updates.ps1
+      - run: npm.cmd --prefix electron ci --no-audit --no-fund
+      - run: npm.cmd --prefix electron run test
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -59,6 +59,12 @@ jobs:
       - name: Verify bundled runtimes and isolated self-test
         run: |
           $version = $env:RELEASE_TAG.Substring(1)
+          $app = Join-Path $PWD 'build/MediaWorkbench'
+          $desktopResult = Join-Path $PWD "release/$version/ELECTRON_TEST_RESULT.json"
+          npm.cmd --prefix electron run smoke -- --directory $app --output $desktopResult
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .venv/Scripts/python.exe tests/electron_desktop_smoke.py --directory $app --output "release/$version/ELECTRON_LIFECYCLE_RESULT.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           .venv/Scripts/python.exe packaging/verify_selftest.py --directory build/MediaWorkbench --output "release/$version/SELF_TEST_RESULT.json"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           .venv/Scripts/python.exe packaging/collect_delivery.py --version $version
@@ -76,5 +82,7 @@ jobs:
           name: release-diagnostics
           path: |
             release/*/SELF_TEST_RESULT.json
+            release/*/ELECTRON_TEST_RESULT.json
+            release/*/ELECTRON_LIFECYCLE_RESULT.json
             release/*/build-integrity.json
           if-no-files-found: ignore

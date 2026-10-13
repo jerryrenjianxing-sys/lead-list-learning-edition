@@ -14,7 +14,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Frontend dependency preparation failed' }
     & npm.cmd --prefix webui run build
     if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed' }
-    & (Join-Path $PSScriptRoot 'build-launcher.ps1')
+    & (Join-Path $PSScriptRoot 'build-electron.ps1')
     & '.\.venv\Scripts\python.exe' (Join-Path $PSScriptRoot 'stage.py')
     if ($LASTEXITCODE -ne 0) { throw 'Release staging failed' }
     $toolchain=& (Join-Path $PSScriptRoot 'bootstrap-velopack.ps1')

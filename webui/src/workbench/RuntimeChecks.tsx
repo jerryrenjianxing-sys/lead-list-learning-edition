@@ -1,10 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
+import { desktopUpdates, type UpdateState } from "./desktop";
 
 type Check = { id: string; state: string; message: string; elapsed_seconds: number; local_state: string; network_state: string; steps: { id: string; name: string; state: string; message: string; elapsed_seconds: number }[] };
-type Update = { state: string; version?: string; message?: string; size?: number; progress?: number; notes?: string };
-type Bridge = { postMessage: (value: unknown) => void; addEventListener: (name: string, handler: (event: MessageEvent) => void) => void; removeEventListener: (name: string, handler: (event: MessageEvent) => void) => void };
-const desktop = () => (window as unknown as { chrome?: { webview?: Bridge } }).chrome?.webview;
 const labels: Record<string, string> = { pending: "待检查", running: "检查中", passed: "通过", failed: "未通过", limited: "平台限制", unconfirmed: "未能确认", skipped: "未检查", interrupted: "已中断", incomplete: "未完成", cancelling: "正在取消", cancelled: "已取消", timed_out: "已超时", completed: "检查结束" };
 const releaseUrl = "https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases";
 
@@ -12,18 +10,20 @@ export default function RuntimeChecks() {
   const [check, setCheck] = useState<Check | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [update, setUpdate] = useState<Update>({ state: "idle" });
+  const [update, setUpdate] = useState<UpdateState>({ state: "idle" });
   const active = check && ["running", "cancelling"].includes(check.state);
   useEffect(() => {
     let alive = true;
     const load = () => api<Check | null>("/diagnostics/self-tests/latest").then(r => { if (alive) setCheck(r); }).catch(e => { if (alive) setError(String(e)); });
     void load();
     const timer = setInterval(load, 2000);
-    const bridge = desktop();
-    const receive = (event: MessageEvent) => { if (event.data?.type === "workbench-update") setUpdate(event.data.value); };
-    bridge?.addEventListener("message", receive);
-    bridge?.postMessage({ type: "workbench-update", action: "status" });
-    return () => { alive = false; clearInterval(timer); bridge?.removeEventListener("message", receive); };
+    const bridge = desktopUpdates();
+    const receive = (value: UpdateState) => { if (alive) setUpdate(value); };
+    const unsubscribe = bridge?.onUpdateState(receive);
+    void bridge?.getUpdateStatus().then(value => { if (value) receive(value); }).catch(() => {
+      if (alive) setUpdate({ state: "error", message: "无法读取桌面更新状态，请重试。" });
+    });
+    return () => { alive = false; clearInterval(timer); unsubscribe?.(); };
   }, []);
   async function start(include_network: boolean) {
     setBusy(true); setError("");
@@ -38,7 +38,17 @@ export default function RuntimeChecks() {
     catch (e) { setError(String(e)); }
     finally { setBusy(false); }
   }
-  function updateAction(action: string) { desktop()?.postMessage({ type: "workbench-update", action }); }
+  async function updateAction(action: "check" | "download" | "install") {
+    const bridge = desktopUpdates();
+    if (!bridge) return;
+    try {
+      if (action === "check") await bridge.checkForUpdates();
+      else if (action === "download") await bridge.downloadUpdate();
+      else await bridge.installUpdate();
+    } catch {
+      setUpdate({ state: "error", message: "更新操作未完成，请重试或打开 GitHub 发行页。" });
+    }
+  }
   return <>
     <section className="wb-card wb-self-test">
       <h2>运行自检</h2>
@@ -64,7 +74,7 @@ export default function RuntimeChecks() {
     <section className="wb-card">
       <h2>软件更新</h2>
       <p>版本与安装包由 GitHub 发布。当前使用预览通道，安装更新前会备份数据。</p>
-      {desktop() ? <>
+      {desktopUpdates() ? <>
         <p role="status" aria-live="polite">{update.message || "可检查是否有新版本。"}</p>
         {update.version && <p>版本 {update.version}{update.size ? ` · ${(update.size / 1024 / 1024).toFixed(1)} MB` : ""}</p>}
         {update.notes && <details><summary>更新说明</summary><pre className="wb-update-notes">{update.notes}</pre></details>}
