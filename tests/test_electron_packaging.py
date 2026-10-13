@@ -3,6 +3,8 @@
 import importlib.util
 import json
 from pathlib import Path
+import shutil
+import subprocess
 import zipfile
 
 import pytest
@@ -168,3 +170,43 @@ def test_native_update_summary_requires_current_patch_and_cleanup():
     without_override = {key: value for key, value in raw.items() if key != "implementation_override"}
     with pytest.raises(RuntimeError, match="Native updater"):
         module.public_native_update_summary(without_override, "0.3.1")
+
+
+def test_workflow_native_report_reaches_collector_across_npm_prefix_cwd(tmp_path):
+    yaml = pytest.importorskip("yaml")
+    powershell = shutil.which("pwsh") or shutil.which("powershell")
+    if powershell is None:
+        pytest.skip("PowerShell is required to exercise Windows workflow argument evaluation")
+    workflow = yaml.safe_load((ROOT / ".github/workflows/windows.yml").read_text(encoding="utf-8"))
+    step = next(item for item in workflow["jobs"]["release"]["steps"] if item.get("name") == "Verify the actual native desktop updater")
+    lines = step["run"].splitlines()
+    declaration = next(line for line in lines if line.strip().startswith("$nativeResult ="))
+    producer = next(line for line in lines if "npm.cmd --prefix electron run update-smoke" in line)
+    collector = next(line for line in lines if "packaging/collect_delivery.py" in line)
+    collector = collector.replace(".venv/Scripts/python.exe", "Capture-Collector", 1)
+    (tmp_path / "electron").mkdir()
+    script = r"""
+$ErrorActionPreference='Stop'
+$app='unused-stage'
+$version='0.3.1'
+$private=[pscustomobject]@{package='unused-private-package'}
+$setups=@([pscustomobject]@{FullName='unused-setup'})
+function npm.cmd {
+    $index=[array]::IndexOf([object[]]$args, '--output')
+    $report=$args[$index+1]
+    Push-Location 'electron'
+    try { $script:produced=$ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($report) }
+    finally { Pop-Location }
+}
+function Capture-Collector {
+    $index=[array]::IndexOf([object[]]$args, '--native-update-result')
+    $script:collected=$ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($args[$index+1])
+}
+""" + "\n".join((declaration, producer, collector)) + r"""
+@{produced=$produced;collected=$collected} | ConvertTo-Json -Compress
+"""
+    result = subprocess.run([powershell, "-NoProfile", "-Command", script], cwd=tmp_path, capture_output=True, text=True, encoding="utf-8", check=True, timeout=15)
+    paths = json.loads(result.stdout)
+    expected = (tmp_path / ".cache/native-update-smoke-raw.json").resolve()
+    assert Path(paths["produced"]) == expected
+    assert Path(paths["collected"]) == expected

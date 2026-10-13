@@ -84,12 +84,13 @@ jobs:
           $version = $env:RELEASE_TAG.Substring(1)
           $app = Join-Path $PWD 'build/MediaWorkbench'
           $release = Join-Path $PWD "release/$version"
+          $nativeResult = Join-Path $PWD '.cache/native-update-smoke-raw.json'
           $private = Get-Content '.cache/private-upgrade/PRIVATE_TEST_RESULT.json' -Raw | ConvertFrom-Json
           $setups = @(Get-ChildItem -LiteralPath $release -Filter '*Setup.exe')
           if ($setups.Count -ne 1) { throw 'Current installer is ambiguous' }
-          npm.cmd --prefix electron run update-smoke -- --directory $app --setup ($setups[0].FullName) --next-package $private.package --output .cache/native-update-smoke-raw.json
+          npm.cmd --prefix electron run update-smoke -- --directory $app --setup ($setups[0].FullName) --next-package $private.package --output $nativeResult
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          .venv/Scripts/python.exe packaging/collect_delivery.py --version $version --native-update-result .cache/native-update-smoke-raw.json
+          .venv/Scripts/python.exe packaging/collect_delivery.py --version $version --native-update-result $nativeResult
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify bundled runtimes and isolated self-test
         run: |
@@ -131,4 +132,6 @@ jobs:
             release/*/ELECTRON_UPGRADE_RESULT.json
             release/*/ELECTRON_NATIVE_UPDATE_RESULT.json
             release/*/build-integrity.json
+            .cache/native-update-smoke-raw.json
+            electron/.cache/native-update-smoke-raw.json
           if-no-files-found: ignore
