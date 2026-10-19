@@ -1,5 +1,5 @@
 {
   "publication": "preview",
-  "version": "0.4.1",
-  "reason": "User approved the installed candidate and explicitly requested the Markdown clipboard feature and a new preview release. Unverified receiving Agent compatibility remains documented."
+  "version": "0.4.2",
+  "reason": "User approved MD-only homepage copy, removal of text fallback, preview publication and local upgrade. Receiving Agent compatibility remains separately validated."
 }

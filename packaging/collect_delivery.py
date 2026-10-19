@@ -12,8 +12,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def upgrade_baseline(version):
-    """Keep historical 0.3 evidence while verifying 0.4 against deployed Electron."""
-    return "0.3.1" if tuple(map(int, version.split('.'))) >= (0, 4, 0) else "0.2.0"
+    """Pin deployed upgrade fixtures without invalidating historical evidence."""
+    parts = tuple(map(int, version.split('.')))
+    if parts >= (0, 4, 2):
+        return "0.4.1"
+    return "0.3.1" if parts >= (0, 4, 0) else "0.2.0"
 
 
 def full_package(release, version):

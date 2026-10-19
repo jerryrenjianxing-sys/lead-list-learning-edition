@@ -174,8 +174,6 @@
 }
 .skill-copy-options-panel label { display: block; font-size: 13px; margin-bottom: 8px; }
 .skill-copy-options-panel input { width: 100%; box-sizing: border-box; padding: 9px; border: 1px solid var(--sh-line); border-radius: 5px; color: inherit; background: var(--sh-bg); }
-.skill-copy-options-panel p { font-size: 12px; color: var(--sh-muted); line-height: 1.6; }
-.skill-copy-options-panel .skill-button { width: 100%; min-height: 40px; }
 .skill-button {
   min-height: 50px;
   min-width: 160px;
@@ -360,42 +358,6 @@
 .skill-workbench:hover {
   color: var(--sh-accent);
 }
-.skill-copy-dialog {
-  width: min(660px, calc(100% - 32px));
-  padding: 28px;
-  border: 1px solid var(--sh-line);
-  border-radius: 12px;
-  background: var(--sh-bg);
-  color: var(--sh-text);
-  max-height: 90svh;
-  overflow: auto;
-}
-.skill-copy-dialog::backdrop {
-  background: #0009;
-  backdrop-filter: blur(4px);
-}
-.skill-copy-dialog h2 {
-  font-size: 20px;
-  margin: 0 0 12px;
-}
-.skill-copy-dialog p {
-  font-size: 14px;
-  line-height: 1.8;
-  color: var(--sh-muted);
-}
-.skill-copy-dialog textarea {
-  display: block;
-  width: 100%;
-  height: 240px;
-  resize: vertical;
-  margin: 20px 0;
-  padding: 14px;
-  border: 1px solid var(--sh-line);
-  border-radius: 6px;
-  font-size: 12px;
-  background: var(--sh-bg);
-  color: var(--sh-text);
-}
 @keyframes skill-agents-scroll {
   to {
     transform: translateX(-50%);
@@ -528,9 +490,8 @@
     margin: 0 22px;
     min-height: 62px;
   }
-  .skill-copy-dialog {
-    padding: 22px;
-  }
+  .skill-copy-options { grid-column: 1 / -1; }
+  .skill-copy-options-panel { left: 0; right: auto; }
 }
 @media (prefers-reduced-motion: reduce) {
   .skill-marquee-track {

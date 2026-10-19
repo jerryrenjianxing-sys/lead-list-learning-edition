@@ -9,9 +9,9 @@ description: 用本机 Media Deep Researcher 采集社媒数据、开展自定�
 
 ## 本机接入
 
-首页复制的 Markdown 附件或文字短卡提供当前完整 Skill、随包 Python、客户端及实例文件的真实绝对路径。附件可以改名，它是本机接入入口；优先读取所指向的完整 Skill，再直接运行其中的完整 `connect` 命令。Windows 主入口是随包 `python.exe`，无需安装 Python 或调整脚本执行策略。ZIP 是无法取得本机 Skill 时的备用材料，现成客户端直接使用。
+首页只复制 Markdown 文件，提供当前完整 Skill、随包 Python、客户端及实例文件的真实绝对路径。文件可以改名，它是本机接入入口；优先读取所指向的完整 Skill，再直接运行其中的完整 `connect` 命令。Windows 主入口是随包 `python.exe`，无需安装 Python 或调整脚本执行策略。ZIP 是无法取得本机 Skill 时的备用材料，现成客户端直接使用。
 
-`connect` 轻量核对当前实例、授权和能力；`check` 保留原有能力字段。后续保持短卡的 Python、客户端与 `--instance` 前缀，使用客户端 `api`、`receipt`、`upload`、`download` 等命令。实例文件中的凭据由客户端读取，不展示文件内容。路径过期、无本地工具权限或连接失败时，按 [连接与恢复](references/recovery.md) 处理。
+`connect` 轻量核对当前实例、授权和能力；`check` 保留原有能力字段。后续保持文件中的 Python、客户端与 `--instance` 前缀，使用客户端 `api`、`receipt`、`upload`、`download` 等命令。实例文件中的凭据由客户端读取，不展示文件内容。路径过期、无本地工具权限或连接失败时，按 [连接与恢复](references/recovery.md) 处理。
 
 ## 根据这次请求继续
 

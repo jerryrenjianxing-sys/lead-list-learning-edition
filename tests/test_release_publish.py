@@ -43,7 +43,7 @@ def test_ambiguous_drafts_cannot_be_published(publisher, monkeypatch):
         publisher.find_release("v0.2.0")
 
 
-@pytest.mark.parametrize(("version", "next_version", "baseline"), [("0.3.0", "0.3.1", "0.2.0"), ("0.3.1", "0.3.2", "0.2.0"), ("0.4.1", "0.4.2", "0.3.1")])
+@pytest.mark.parametrize(("version", "next_version", "baseline"), [("0.3.0", "0.3.1", "0.2.0"), ("0.3.1", "0.3.2", "0.2.0"), ("0.4.1", "0.4.2", "0.3.1"), ("0.4.2", "0.4.3", "0.4.1")])
 def test_release_requires_current_version_upgrade_and_cleanup(publisher, version, next_version, baseline):
     integrity = {"version": version, "packaged_manifest_dirty": False, "desktop": {"kind": "electron"}}
     local = {"local_state": "passed", "cleanup_complete": True}

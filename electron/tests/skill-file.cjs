@@ -1,5 +1,5 @@
 // Real renderer/preload and Windows file clipboard; never sends a chat message.
-const { _electron } = require('playwright');
+const { _electron, chromium } = require('playwright');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -34,7 +34,7 @@ try:
  print(json.dumps(files,ensure_ascii=False))
 finally:u.CloseClipboard()
 `;
-let desktop, processHandle, info;
+let desktop, browser, processHandle, info;
 const checks = [];
 let retainedFile;
 async function copiedFiles() {
@@ -66,12 +66,13 @@ async function main() {
     assert(content.includes(path.join(root, 'skills/media-workbench/SKILL.md')));
     checks.push('real-preload-copy-to-native-windows-file-clipboard');
     await page.getByRole('button', { name: '复制 Skill', exact: true }).click();
-    await page.getByText('已复制文件 Media Deep Researcher.md', { exact: false }).waitFor();
-    await page.getByText('更多复制选项', { exact: true }).click();
+    await page.getByText('已复制 MD 文件', { exact: true }).waitFor();
+    assert.equal(await page.locator('.skill-feedback').innerText(), '已复制 MD 文件');
+    await page.getByText('修改文件名', { exact: true }).click();
     const name = page.getByRole('textbox', { name: 'Skill 文件名' });
     await name.fill('研究入口.md');
     await page.getByRole('button', { name: '复制 Skill', exact: true }).click();
-    await page.getByText('已复制文件 研究入口.md', { exact: false }).waitFor();
+    await page.getByText('已复制 MD 文件', { exact: true }).waitFor();
     const renamed = await copiedFiles();
     assert.equal(path.basename(renamed[0]), '研究入口.md');
     assert.notEqual(renamed[0], files[0]);
@@ -85,12 +86,9 @@ async function main() {
     }
     assert.deepEqual(await copiedFiles(), renamed);
     checks.push('invalid-file-names-and-arbitrary-content-rejected');
-    await page.getByRole('button', { name: '复制文字', exact: true }).click();
-    await page.getByText('已复制文字，粘贴给你的 Agent 即可。', { exact: true }).waitFor();
-    const text = await desktop.evaluate(async ({ clipboard }) => (await clipboard.readText()));
-    assert(text.includes('--instance') && text.includes(discovery));
-    assert(!text.includes(info.token));
-    checks.push('explicit-plain-text-fallback');
+    assert.equal(await page.getByRole('button', { name: '复制文字', exact: true }).count(), 0);
+    assert.equal(await page.getByRole('dialog').count(), 0);
+    checks.push('desktop-has-only-md-copy-and-brief-success');
     const command = content.match(/```powershell\r?\n([^\r\n]+)\r?\n```/)[1];
     const connected = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { env, cwd: temporary, encoding: 'utf8', windowsHide: true, timeout: 15000 });
     assert.equal(JSON.parse(connected.stdout).status, 'ok');
@@ -104,7 +102,32 @@ async function main() {
       await page.screenshot({ path: path.join(temporary, `${mode}-skill-file.png`) });
     }
     checks.push('keyboard-narrow-window-and-both-themes');
+    let browserOptions = { headless: true };
+    if (packaged) {
+      const [folder] = fs.readdirSync(path.join(root, 'runtime/browsers')).filter(name => /^chromium-\d+$/.test(name));
+      browserOptions.executablePath = path.join(root, 'runtime/browsers', folder, 'chrome-win64/chrome.exe');
+    }
+    browser = await chromium.launch(browserOptions);
+    for (const legacy of [false, true]) {
+      const ordinary = await browser.newPage({ viewport: { width: 480, height: 800 } });
+      await ordinary.addInitScript(value => {
+        window.__textCopies = 0;
+        Object.defineProperty(navigator, 'clipboard', { value: { writeText: async () => { window.__textCopies++; } } });
+        if (value) window.mdrDesktop = {};
+      }, legacy);
+      const skillRequests = [];
+      ordinary.on('request', request => { if (/\/api\/(?:v1\/skill|platform-skill)/.test(request.url())) skillRequests.push(request.url()); });
+      await ordinary.goto(info.base_url);
+      await ordinary.getByRole('button', { name: '复制 Skill', exact: true }).click();
+      await ordinary.getByText('请在新版桌面软件中复制', { exact: true }).waitFor();
+      assert.equal(await ordinary.evaluate(() => window.__textCopies), 0);
+      assert.equal(skillRequests.length, 0);
+      assert.equal(await ordinary.getByRole('dialog').count(), 0);
+      await ordinary.close();
+    }
+    checks.push('ordinary-browser-and-legacy-desktop-never-fall-back-to-text');
   } finally {
+    if (browser) await browser.close();
     if (desktop) {
       await pageQuit();
       await desktop.close().catch(() => {});

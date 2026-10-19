@@ -64,12 +64,12 @@ jobs:
         run: |
           $version = $env:RELEASE_TAG.Substring(1)
           $release = Join-Path $PWD "release/$version"
-          $legacy = Join-Path $PWD '.cache/baseline031'
+          $legacy = Join-Path $PWD '.cache/baseline041'
           New-Item -ItemType Directory -Path $legacy -Force | Out-Null
-          gh release download v0.3.1 --repo jerryrenjianxing-sys/lead-list-learning-edition --pattern 'MediaWorkbench.Desktop-win-preview-Setup.exe' --dir $legacy
+          gh release download v0.4.1 --repo jerryrenjianxing-sys/lead-list-learning-edition --pattern 'MediaWorkbench.Desktop-win-preview-Setup.exe' --dir $legacy
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $oldSetup = Join-Path $legacy 'MediaWorkbench.Desktop-win-preview-Setup.exe'
-          if ((Get-FileHash -LiteralPath $oldSetup -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'e8a814be681f9bff15ff54710b37524e49bb5daf3b1c8e11adc06eb59c91494a') { throw 'Baseline installer fixture checksum mismatch' }
+          if ((Get-FileHash -LiteralPath $oldSetup -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'f7070135ffacfaa8c449f1b23ecceb8d15f4a9a0b6bdcbc921702ea05003497c') { throw 'Baseline installer fixture checksum mismatch' }
           .venv/Scripts/python.exe packaging/prepare_test_release.py --source build/MediaWorkbench --output .cache/private-upgrade
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $private = Get-Content '.cache/private-upgrade/PRIVATE_TEST_RESULT.json' -Raw | ConvertFrom-Json
@@ -77,7 +77,7 @@ jobs:
           $full = @($feed.Assets | Where-Object { $_.Version -eq $version -and $_.Type -eq 'Full' -and $_.PackageId -eq 'MediaWorkbench.Desktop' })
           $setups = @(Get-ChildItem -LiteralPath $release -Filter '*Setup.exe')
           if ($full.Count -ne 1 -or $setups.Count -ne 1) { throw 'Current installer or update package is ambiguous' }
-          .venv/Scripts/python.exe tests/electron_upgrade_smoke.py --baseline-version 0.3.1 --old-setup $oldSetup --new-setup ($setups[0].FullName) --new-package (Join-Path $release ($full[0].FileName)) --version $version --next-package $private.package --next-version $private.version --output .cache/upgrade-smoke-raw.json
+          .venv/Scripts/python.exe tests/electron_upgrade_smoke.py --baseline-version 0.4.1 --old-setup $oldSetup --new-setup ($setups[0].FullName) --new-package (Join-Path $release ($full[0].FileName)) --version $version --next-package $private.package --next-version $private.version --output .cache/upgrade-smoke-raw.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           .venv/Scripts/python.exe packaging/collect_delivery.py --version $version --upgrade-result .cache/upgrade-smoke-raw.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

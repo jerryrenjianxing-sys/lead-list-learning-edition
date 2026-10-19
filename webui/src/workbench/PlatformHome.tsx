@@ -1,11 +1,8 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
-import { useEffect, useRef, useState } from "react";
-
-import { loadSkillMarkdown, fetchLocalApi } from "./home-loader";
+import { useRef, useState } from "react";
 import ThemeToggle from "./ThemeToggle";
 import { desktopSkillCopy } from "./desktop";
-const API = "";
 import "./skill-home.css";
 
 const agents = [
@@ -78,49 +75,26 @@ export default function PlatformHome({
   const [copy, setCopy] = useState<ActionState>("idle");
   const [filename, setFilename] = useState("Media Deep Researcher.md");
   const [feedback, setFeedback] = useState("");
-  const [manual, setManual] = useState(""),
-    [paused, setPaused] = useState(false);
-  const copying = useRef(false),
-    dialog = useRef<HTMLDialogElement>(null),
-    manualText = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => {
-    if (manual) {
-      dialog.current?.showModal();
-      manualText.current?.focus();
-      manualText.current?.select();
-    }
-  }, [manual]);
-  async function copySkill(textOnly = false) {
+  const [paused, setPaused] = useState(false);
+  const copying = useRef(false);
+  async function copySkill() {
     if (copying.current) return;
     copying.current = true;
     setCopy("loading");
     setFeedback("");
     try {
       const copyFile = desktopSkillCopy();
-      if (copyFile && !textOnly) {
-        const result = await copyFile({ name: filename });
-        setCopy("done");
-        setFeedback(`已复制文件 ${result.name}，在 Agent 中粘贴为附件即可。不支持文件粘贴时，请用“复制文字”。`);
+      if (!copyFile) {
+        setCopy("error");
+        setFeedback("请在新版桌面软件中复制");
         return;
       }
-      const markdown = await loadSkillMarkdown(() =>
-        fetchLocalApi(
-          `${API}/api/platform-skill?format=connect`,
-          { cache: "no-store" },
-          15000,
-        ),
-      );
-      try {
-        await navigator.clipboard.writeText(markdown);
-        setCopy("done");
-        setFeedback("已复制文字，粘贴给你的 Agent 即可。");
-      } catch {
-        setCopy("idle");
-        setManual(markdown);
-      }
+      await copyFile({ name: filename });
+      setCopy("done");
+      setFeedback("已复制 MD 文件");
     } catch (error) {
       setCopy("error");
-      setFeedback(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "") : "复制失败，请重试，或使用复制文字。");
+      setFeedback(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "") : "复制失败，请重试");
     } finally {
       copying.current = false;
     }
@@ -173,12 +147,10 @@ export default function PlatformHome({
                 : "复制 Skill"}
           </button>
           <details className="skill-copy-options">
-            <summary>更多复制选项</summary>
+            <summary>修改文件名</summary>
             <div className="skill-copy-options-panel">
               <label htmlFor="skill-file-name">Skill 文件名</label>
               <input id="skill-file-name" value={filename} maxLength={100} disabled={copy === "loading"} onChange={event => { setFilename(event.target.value); setCopy("idle"); setFeedback(""); }} />
-              <p>可改名，保留 .md 后缀。软件需在本机运行。</p>
-              <button type="button" className="skill-button skill-button-secondary" disabled={copy === "loading"} onClick={() => void copySkill(true)}>复制文字</button>
             </div>
           </details>
         </div>
@@ -246,30 +218,6 @@ export default function PlatformHome({
       <footer className="skill-footer">
         <span>本地运行 · 自由连接</span>
       </footer>
-      <dialog
-        ref={dialog}
-        className="skill-copy-dialog"
-        onClose={() => setManual("")}
-      >
-        <h2>手动复制 Skill</h2>
-        <p>
-          浏览器未允许直接复制。下方已选中 Skill，请按 Ctrl+C（Mac 为
-          ⌘C）。
-        </p>
-        <textarea
-          ref={manualText}
-          aria-label="Skill"
-          readOnly
-          value={manual}
-        />
-        <button
-          type="button"
-          className="skill-button skill-button-primary"
-          onClick={() => dialog.current?.close()}
-        >
-          完成
-        </button>
-      </dialog>
     </main>
   );
 }
