@@ -36,9 +36,11 @@ from .models import (
     JobHistoryRequest,
     SelfTestRequest,
 )
-from .paths import ROOT, PRODUCT, DISPLAY_NAME, data_root
+from .paths import ROOT, PRODUCT, DISPLAY_NAME, data_root, discovery_path
 from .queue import Queue, PLATFORMS, create_job, control, job_view, clear_history
-from .auth import platform_view
+from .agent_access import AgentAccess
+from .workspace import WorkspaceReadModel
+from .upstream import revision as upstream_revision
 from .sessions import SessionManager
 from .selftest import SelfTests
 
@@ -109,6 +111,9 @@ def make_app(root=None, *, run_queue=True):
     app.state.db, app.state.queue, app.state.token = db, queue, token
     app.state.sessions = sessions
     app.state.self_tests = self_tests
+    access = AgentAccess(root, SKILL, sys.executable, discovery_path())
+    workspace = WorkspaceReadModel(db, sessions, access.capabilities)
+    app.state.agent_access = access
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
@@ -207,39 +212,11 @@ def make_app(root=None, *, run_queue=True):
 
     @app.get("/api/v1/capabilities")
     def capabilities():
-        return {
-            **health(),
-            "platforms": [
-                {
-                    "id": p,
-                    "name": name,
-                    "modes": ["search", "detail", "creator", "login"],
-                    "comments": True,
-                    "enrich_profiles": p in ("xhs", "dy", "ks"),
-                    "media": False,
-                    "live_validation": "pending",
-                }
-                for p, name in PLATFORMS.items()
-            ],
-            "operations": [
-                "jobs",
-                "datasets",
-                "analyses",
-                "artifacts",
-                "settings",
-                "diagnostics",
-                "self_test",
-                "imports",
-            ],
-            "analysis": "user_defined",
-            "exports": ["csv", "json", "xlsx", "docx", "md"],
-            "openapi": "/openapi.json",
-            "agent_compatibility": {
-                "codex": "fresh_agent_validation_pending",
-                "hermes": "fresh_agent_validation_pending",
-            },
-            "resume_strategy": "Saved records are deduplicated on replay; analysis snapshots and coverage persist.",
-        }
+        return access.capabilities()
+
+    @app.get("/api/v1/agent/handshake")
+    def agent_handshake():
+        return access.handshake()
 
     @app.get("/api/v1/skill")
     @app.get("/api/platform-skill")
@@ -247,7 +224,7 @@ def make_app(root=None, *, run_queue=True):
         if format == "connect":
             address = str(request.base_url).rstrip("/")
             return PlainTextResponse(
-                f"请使用Media Deep Researcher处理我的任务。它已在本机运行：{address}。下载 {address}/api/v1/skill 的完整 ZIP，解压后读取 media-workbench/SKILL.md，使用随包客户端连接。先运行 scripts/workbench.ps1 check（Windows），或 python scripts/workbench.py check。按我的目标自行决定分析方法、字段和输出形式；如果我只要求检查软件，运行 self-test 并简短说明检查状态，不创建正式研究报告。正常任务的进度与成果保存回软件。连接失败时报告实际原因。",
+                access.connect_text(address),
                 media_type="text/plain",
             )
         paths = sorted(
@@ -295,19 +272,7 @@ def make_app(root=None, *, run_queue=True):
 
     @app.get("/api/v1/jobs")
     def jobs(include_archived: bool = False):
-        return {
-            "items": [
-                job_view(row)
-                for row in db.query(
-                    "SELECT j.*,a.archived_at FROM jobs j LEFT JOIN job_history_archive a ON a.job_id=j.id "
-                    + ("" if include_archived else "WHERE a.job_id IS NULL ")
-                    + "ORDER BY j.created DESC"
-                )
-            ],
-            "archived_count": db.query("SELECT COUNT(*) n FROM job_history_archive")[0][
-                "n"
-            ],
-        }
+        return workspace.jobs(include_archived)
 
     @app.post("/api/v1/jobs/clear-history")
     def hide_history(body: JobHistoryRequest, request: Request):
@@ -360,22 +325,7 @@ def make_app(root=None, *, run_queue=True):
 
     @app.get("/api/v1/platforms")
     def platforms():
-        items = []
-        for p in capabilities()["platforms"]:
-            last = db.query(
-                "SELECT id,state,updated,error FROM jobs WHERE platform=? ORDER BY updated DESC LIMIT 1",
-                (p["id"],),
-            )
-            items.append(
-                {
-                    **p,
-                    "saved_session": any((root / "browser_data").glob(f"*{p['id']}_*")),
-                    **platform_view(db, p["id"]),
-                    **sessions.store.view(p["id"]),
-                    "last_task": last[0] if last else None,
-                }
-            )
-        return {"items": items}
+        return workspace.platforms()
 
     @app.post("/api/v1/internal/session", include_in_schema=False)
     def session_command(body: dict):
@@ -396,14 +346,7 @@ def make_app(root=None, *, run_queue=True):
 
     @app.get("/api/v1/datasets")
     def datasets():
-        return {
-            "items": [
-                {**r, "metadata": json.loads(r["metadata"])}
-                for r in db.query(
-                    "SELECT d.*,COUNT(r.id) record_count FROM datasets d LEFT JOIN records r ON d.id=r.dataset_id GROUP BY d.id ORDER BY d.created DESC"
-                )
-            ]
-        }
+        return workspace.datasets()
 
     @app.post("/api/v1/datasets")
     def add_dataset(body: DatasetRequest, request: Request):
@@ -547,12 +490,7 @@ def make_app(root=None, *, run_queue=True):
 
     @app.get("/api/v1/analyses")
     def analyses():
-        return {
-            "items": [
-                analysis_detail(r["id"])
-                for r in db.query("SELECT id FROM analyses ORDER BY created DESC")
-            ]
-        }
+        return workspace.analyses()
 
     @app.post("/api/v1/analyses")
     def start_analysis(body: AnalysisRequest, request: Request):
@@ -564,16 +502,7 @@ def make_app(root=None, *, run_queue=True):
 
     @app.get("/api/v1/analyses/{analysis_id}")
     def analysis_detail(analysis_id: str):
-        row = db.one("analyses", analysis_id)
-        with db.connect() as con:
-            progress = analysis.coverage(con, analysis_id)
-        schema = row.pop("schema_json")
-        return {
-            **row,
-            "result_schema": json.loads(schema) if schema is not None else None,
-            "metadata": json.loads(row["metadata"]),
-            "coverage": progress,
-        }
+        return workspace.analysis(analysis_id)
 
     @app.get("/api/v1/analyses/{analysis_id}/inputs")
     def inputs(
@@ -664,12 +593,7 @@ def make_app(root=None, *, run_queue=True):
 
     @app.get("/api/v1/artifacts")
     def artifacts():
-        return {
-            "items": [
-                {**r, "download_url": f"/api/v1/artifacts/{r['id']}/download"}
-                for r in db.query("SELECT * FROM artifacts ORDER BY created DESC")
-            ]
-        }
+        return workspace.artifacts()
 
     @app.get("/api/v1/artifacts/{artifact_id}/download")
     def download(artifact_id: str):
@@ -716,7 +640,7 @@ def make_app(root=None, *, run_queue=True):
                 "SELECT id,state,platform FROM jobs WHERE state IN ('running','stopping','queued')"
             ),
             "database": db.query("PRAGMA quick_check")[0],
-            "upstream_revision": "380b426000aac3d612837ed72c99808347dc94c9",
+            "upstream_revision": upstream_revision(),
         }
 
     @app.post("/api/v1/backup")

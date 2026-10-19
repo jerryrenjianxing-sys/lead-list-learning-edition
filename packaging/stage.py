@@ -175,7 +175,7 @@ def main():
     ]
     for name in modules:
         shutil.copytree(ROOT / name, STAGE / name, dirs_exist_ok=True, ignore=ignore)
-    for name in ["main.py", "var.py", "LICENSE", "README.md", "THIRD_PARTY_NOTICES.md"]:
+    for name in ["main.py", "var.py", "LICENSE", "README.md", "THIRD_PARTY_NOTICES.md", "upstream.lock.json"]:
         if (ROOT / name).is_file():
             shutil.copy2(ROOT / name, STAGE / name)
     (STAGE / "docs").mkdir(exist_ok=True)
@@ -304,7 +304,7 @@ def main():
         "python": "3.11.16",
         "node": "22.22.3",
         "desktop": {"kind": "electron", **desktop_receipt},
-        "upstream": "380b426000aac3d612837ed72c99808347dc94c9",
+        "upstream": json.loads((ROOT / "upstream.lock.json").read_text(encoding="utf-8"))["revision"],
         "build_time": datetime.now(timezone.utc).isoformat(),
         "source_revision": source_revision,
         "source_dirty": source_dirty,

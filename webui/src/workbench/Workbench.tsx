@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import PlatformLogin, { authLabel } from "./PlatformLogin";
 import RuntimeChecks from "./RuntimeChecks";
+import { pageResources, useWorkspaceResources, type ResourceStatus, type WorkspaceResource } from "./workspace-loader";
 import "./workbench.css";
 type Item = Record<string, any>;
 const platforms = [
@@ -41,6 +42,14 @@ function Status({ value }: { value: string }) {
   return (
     <span className={`wb-status state-${value}`}>{labels[value] || value}</span>
   );
+}
+function ResourceFeedback({ title, state, retry }: { title: string; state?: ResourceStatus; retry: () => void }) {
+  if (state?.error) return <div role="alert" className="wb-check-error">
+    <p>{title}暂未更新：{state.error}{state.loaded ? "；仍显示上次读取的数据。" : "。"}</p>
+    <button type="button" disabled={state.loading} onClick={retry}>重试{title}</button>
+  </div>;
+  if (state?.loading && !state.loaded) return <p role="status">正在读取{title}…</p>;
+  return null;
 }
 export default function Workbench() {
   const [version, setVersion] = useState("");
@@ -82,6 +91,20 @@ export default function Workbench() {
     [diagnostics, DX] = useState<Item>({}),
     [browserPath, BP] = useState(""),
     [legacyPath, LP] = useState("");
+  const browserEdited = useRef(false);
+  const browserRevision = useRef(0);
+  const { states: sectionStates, refresh: readSections } = useWorkspaceResources((key, value) => {
+    if (key === "jobs") { J(value.items || []); AC(value.archived_count || 0); }
+    else if (key === "datasets") D(value.items || []);
+    else if (key === "analyses") A(value.items || []);
+    else if (key === "artifacts") F(value.items || []);
+    else if (key === "platforms") applyPlatforms(value.items || []);
+    else if (key === "settings") { SET(value); if (!browserEdited.current) BP(typeof value.browser_path === "string" ? value.browser_path : ""); }
+    else if (key === "diagnostics") DX(value);
+  });
+  const currentTab = useRef(tab);
+  currentTab.current = tab;
+  const sectionFeedback = (key: WorkspaceResource, title: string) => <ResourceFeedback title={title} state={sectionStates[key]} retry={() => void readSections([key])} />;
   const previousAuth = useRef<Set<string>>(new Set());
   const submitting = useRef(new Set<string>());
   const [pendingLogin, PL] = useState<Record<string, string>>({});
@@ -151,35 +174,22 @@ export default function Workbench() {
       });
     }
   }
-  async function refresh() {
-    const [j, d, a, f, p] = await Promise.all([
-      api("/jobs"),
-      api("/datasets"),
-      api("/analyses"),
-      api("/artifacts"),
-      api("/platforms"),
-    ]);
-    J(j.items);
-    AC(j.archived_count || 0);
-    D(d.items);
-    A(a.items);
-    F(f.items);
-    applyPlatforms(p.items);
-  }
+  async function refresh() { await readSections(pageResources[currentTab.current] || []); }
   useEffect(() => {
-    void refresh().catch((e) => E(String(e)));
-    const timer = setInterval(
-      () => void refresh().catch((e) => E(String(e))),
-      3000,
-    );
-    const clockTimer = setInterval(() => CLOCK(Date.now()), 1000);
+    const keys = pageResources[tab] || [];
+    void readSections(keys);
+    const timer = tab === "settings" ? undefined : setInterval(() => void readSections(keys), ["jobs", "platforms"].includes(tab) ? 3000 : 10000);
     return () => {
       clearInterval(timer);
-      clearInterval(clockTimer);
     };
-  }, []);
+  }, [tab, readSections]);
   useEffect(() => {
-    if (!jobId) return;
+    if (!["jobs", "platforms"].includes(tab)) return;
+    const timer = setInterval(() => CLOCK(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [tab]);
+  useEffect(() => {
+    if (!jobId || tab !== "jobs") return;
     let active = true;
     const load = () =>
       api(`/jobs/${jobId}/events?limit=2000`)
@@ -193,7 +203,7 @@ export default function Workbench() {
       active = false;
       clearInterval(timer);
     };
-  }, [jobId]);
+  }, [jobId, tab]);
   async function perform(action: () => Promise<unknown>, message = "") {
     B(true);
     E("");
@@ -255,14 +265,11 @@ export default function Workbench() {
     T("analyses");
   }
   async function showSettings() {
-    const [s, d] = await Promise.all([api("/settings"), api("/diagnostics")]);
-    SET(s);
-    BP(s.browser_path || "");
-    DX(d);
     T("settings");
+    await readSections(["settings", "diagnostics"]);
   }
   useEffect(() => {
-    const navigate = () => { if (location.hash === "#manage/settings") void perform(showSettings); };
+    const navigate = () => { if (location.hash === "#manage/settings") T("settings"); };
     navigate();
     window.addEventListener("hashchange", navigate);
     return () => window.removeEventListener("hashchange", navigate);
@@ -297,9 +304,7 @@ export default function Workbench() {
             <button
               key={id}
               className={tab === id ? "active" : ""}
-              onClick={() =>
-                id === "settings" ? void perform(showSettings) : T(id)
-              }
+              onClick={() => T(id)}
             >
               {title}
             </button>
@@ -339,18 +344,19 @@ export default function Workbench() {
               </p>
             </div>
             <div className="wb-metrics">
-              {[
-                [active.length, "进行中的任务"],
+              {([
+                [active.length, "进行中的任务", "jobs"],
                 [
                   datasets.reduce((n, d) => n + d.record_count, 0),
-                  "已保存的数据",
+                  "已保存的数据", "datasets",
                 ],
-                [analyses.length, "分析任务"],
-                [artifacts.length, "成果文件"],
-              ].map(([n, title]) => (
+                [analyses.length, "分析任务", "analyses"],
+                [artifacts.length, "成果文件", "artifacts"],
+              ] as [number, string, WorkspaceResource][]).map(([n, title, key]) => (
                 <section className="wb-card" key={title}>
-                  <strong>{n.toLocaleString()}</strong>
+                  <strong>{sectionStates[key]?.loaded ? n.toLocaleString() : "—"}</strong>
                   <span>{title}</span>
+                  {sectionFeedback(key, title)}
                 </section>
               ))}
             </div>
@@ -418,7 +424,7 @@ export default function Workbench() {
                   />
                 </button>
               ))}
-              {!jobs.length && (
+              {!jobs.length && sectionStates.jobs?.loaded && (
                 <p className="wb-empty">
                   还没有采集任务，也可以从演示数据开始。
                 </p>
@@ -439,6 +445,7 @@ export default function Workbench() {
                 void perform(() => createJobs(), "任务已加入后台队列。");
               }}
             >
+              {sectionFeedback("platforms", "平台登录")}
               <div className="wb-platform-select">
                 {platforms.map(([id, title]) => {
                   const p = statuses.find((p) => p.id === id);
@@ -572,6 +579,7 @@ export default function Workbench() {
               <p className="wb-option-help">
                 清理只移除列表记录，保留采集数据、分析成果和登录信息；运行中及排队中的任务不会清理。
               </p>
+              {sectionFeedback("jobs", "任务记录")}
               {jobs.map((j) => (
                 <div className="wb-row" key={j.id}>
                   <button
@@ -647,7 +655,7 @@ export default function Workbench() {
                   </button>
                 </div>
               ))}
-              {!jobs.length && <p className="wb-empty">暂无任务</p>}
+              {!jobs.length && sectionStates.jobs?.loaded && <p className="wb-empty">暂无任务</p>}
             </section>
             {jobId && (
               <section className="wb-card">
@@ -701,6 +709,7 @@ export default function Workbench() {
               </button>
             </div>
             <section className="wb-card">
+              {sectionFeedback("datasets", "数据集")}
               {datasets.map((d) => (
                 <button
                   className={`wb-row ${d.id === datasetId ? "selected" : ""}`}
@@ -715,7 +724,7 @@ export default function Workbench() {
                   <span>查看 →</span>
                 </button>
               ))}
-              {!datasets.length && (
+              {!datasets.length && sectionStates.datasets?.loaded && (
                 <p className="wb-empty">导入数据，或先创建采集任务。</p>
               )}
             </section>
@@ -843,6 +852,7 @@ export default function Workbench() {
               <p>你与 Agent 的分析进度、证据和文件，都保存在这里。</p>
             </div>
             <section className="wb-card">
+              {sectionFeedback("analyses", "分析任务")}
               {analyses.map((a) => (
                 <button
                   className="wb-row"
@@ -859,7 +869,7 @@ export default function Workbench() {
                   <Status value={a.state} />
                 </button>
               ))}
-              {!analyses.length && (
+              {!analyses.length && sectionStates.analyses?.loaded && (
                 <p className="wb-empty">
                   选择数据集创建分析，或让 Agent 直接创建。
                 </p>
@@ -939,6 +949,7 @@ export default function Workbench() {
             )}
             <section className="wb-card">
               <h2>成果文件</h2>
+              {sectionFeedback("artifacts", "成果文件")}
               {artifacts.map((f) => (
                 <a
                   className="wb-row"
@@ -953,11 +964,13 @@ export default function Workbench() {
                   <span>下载 ↓</span>
                 </a>
               ))}
-              {!artifacts.length && <p className="wb-empty">暂无文件</p>}
+              {!artifacts.length && sectionStates.artifacts?.loaded && <p className="wb-empty">暂无文件</p>}
             </section>
           </>
         )}
         {tab === "platforms" && (
+          <>
+          {sectionFeedback("platforms", "平台登录")}
           <PlatformLogin
             platforms={statuses}
             pending={pendingLogin}
@@ -986,6 +999,7 @@ export default function Workbench() {
               void perform(() => api(`/jobs/${id}/stop`, "POST", {}))
             }
           />
+          </>
         )}
         {tab === "settings" && (
           <>
@@ -995,6 +1009,7 @@ export default function Workbench() {
             </div>
             <section className="wb-card">
               <h2>数据与浏览器</h2>
+              {sectionFeedback("settings", "设置")}
               <label>
                 数据目录
                 <input readOnly value={settings.data_directory || ""} />
@@ -1003,7 +1018,7 @@ export default function Workbench() {
                 浏览器路径（可留空）
                 <input
                   value={browserPath}
-                  onChange={(e) => BP(e.target.value)}
+                  onChange={(e) => { browserEdited.current = true; browserRevision.current++; BP(e.target.value); }}
                   placeholder="自动查找 Chrome / Edge，必要时使用内置浏览器"
                 />
               </label>
@@ -1011,8 +1026,11 @@ export default function Workbench() {
                 disabled={busy}
                 onClick={() =>
                   void perform(
-                    () =>
-                      api("/settings", "PUT", { browser_path: browserPath }),
+                    async () => {
+                      const submittedRevision = browserRevision.current;
+                      await api("/settings", "PUT", { browser_path: browserPath });
+                      if (browserRevision.current === submittedRevision) browserEdited.current = false;
+                    },
                     "设置已保存。",
                   )
                 }
@@ -1059,8 +1077,9 @@ export default function Workbench() {
             </section>
             <section className="wb-card">
               <h2>后台状态</h2>
+              {sectionFeedback("diagnostics", "后台状态")}
               <p>
-                后台队列：{diagnostics.queue_alive ? "正常" : "未运行"} · Python{" "}
+                后台队列：{sectionStates.diagnostics?.loaded ? diagnostics.queue_alive ? "正常" : "未运行" : "尚未确认"} · Python{" "}
                 {diagnostics.python} · 软件 {diagnostics.version}
               </p>
               <button onClick={() => void perform(showSettings)}>

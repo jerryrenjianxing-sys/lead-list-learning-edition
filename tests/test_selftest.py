@@ -109,7 +109,9 @@ def test_cancel_races_do_not_stop_next_run(host):
 @pytest.mark.skipif(os.name != "nt", reason="Windows diagnostic process ownership")
 @pytest.mark.parametrize("cancel", [False, True])
 def test_real_diagnostic_timeout_and_cancel_cleanup(tmp_path, cancel):
-    manager = SelfTests(tmp_path, budget=0.05 if not cancel else 180)
+    # The total budget now includes process reaping and cleanup, rather than
+    # granting an additional cleanup window after a 50 ms execution timeout.
+    manager = SelfTests(tmp_path, budget=1.8 if not cancel else 180)
     manager.start(False)
     if cancel:
         manager.cancel(manager.view()["id"])

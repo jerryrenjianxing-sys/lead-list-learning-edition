@@ -1,7 +1,7 @@
 name: Windows checks and preview release
 on:
   push:
-    branches: [main]
+    branches: [main, 'modernization/**']
     tags: ['v[0-9]*']
   pull_request:
     branches: [main]
@@ -32,6 +32,8 @@ jobs:
       - run: npm.cmd --prefix webui run build
       - run: npm.cmd --prefix electron ci --no-audit --no-fund
       - run: npm.cmd --prefix electron run test
+      - run: node electron/node_modules/playwright/cli.js install chromium
+      - run: node electron/tests/workspace-view.cjs
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')

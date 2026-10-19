@@ -61,6 +61,8 @@ def main():
         "python": sys.executable,
         "pid": os.getpid(),
         "data_directory": str(root),
+        "instance_id": app.state.agent_access.instance_id,
+        "workspace_id": app.state.agent_access.workspace_id,
     }
     temporary = discovery.with_suffix(".tmp")
     temporary.write_text(json.dumps(content, ensure_ascii=False), encoding="utf-8")

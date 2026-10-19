@@ -276,10 +276,10 @@ print(json.dumps({"ok":True,"snapshot_decrypts":True,"browser_binding_exists":Tr
 '''
 
 
-def seed(app, env, data, instance):
+def seed(app, env, data, instance, baseline_version="0.2.0"):
     process, log, info = launch_host_or_desktop(app, env, data, instance)
     try:
-        assert request(info, "GET", "/api/v1/health")["version"] == "0.2.0"
+        assert request(info, "GET", "/api/v1/health")["version"] == baseline_version
         request(info, "GET", "/api/v1/platforms")
         run_command([app / "runtime/python/python.exe", ROOT / "tests/client_smoke.py", "--instance", instance, "--output", data.parent / "fixture-exports"], env, timeout=120)
     finally:
@@ -346,8 +346,8 @@ def execute(args):
             try:
                 run_command([args.old_setup, "--silent", "--installto", install, "--log", case / "old-setup.log"], env)
                 app = install / "current"
-                assert app_version(app) == "0.2.0"
-                before = seed(app, env, data, instance)
+                assert app_version(app) == args.baseline_version
+                before = seed(app, env, data, instance, args.baseline_version)
                 if mode == "full-installer":
                     run_command([args.new_setup, "--silent", "--installto", install, "--log", case / "new-setup.log"], env)
                 else:
@@ -360,11 +360,11 @@ def execute(args):
                         pass
                     else:
                         raise AssertionError("Truncated package was unexpectedly accepted")
-                    assert app_version(app) == "0.2.0" and snapshot(data) == before
+                    assert app_version(app) == args.baseline_version and snapshot(data) == before
                     checks.append("broken-package-keeps-old-installation-and-data")
                     native_apply(install, args.new_package.resolve(), env, case)
                 verify_new(app, env, data, instance, before, args.version)
-                checks.append(mode + "-0.2.0-to-" + args.version)
+                checks.append(mode + "-" + args.baseline_version + "-to-" + args.version)
                 if mode == "native-package-update" and args.next_package is not None:
                     native_apply(install, args.next_package.resolve(), env, case)
                     verify_new(app, env, data, instance, before, args.next_version)
@@ -379,7 +379,7 @@ def execute(args):
         registration.restore()
         registration.verify()
     return {
-        "ok": True, "version": args.version, "baseline_version": "0.2.0",
+        "ok": True, "version": args.version, "baseline_version": args.baseline_version,
         "next_version": args.next_version if args.next_package is not None else None,
         "cleanup_complete": True,
         "checks": checks + ["original-shortcuts-and-registry-restored", "encrypted-synthetic-snapshot-readable", "browser-binding-path-retained", "three-analyses-fifteen-exports-retained"],
@@ -387,17 +387,28 @@ def execute(args):
     }
 
 
-def main():
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--old-setup", type=Path, default=ROOT.parent / "outputs/Media Deep Researcher 0.2.0 Windows安装包/MediaWorkbench.Desktop-win-preview-Setup.exe")
+    parser.add_argument("--old-setup", type=Path)
+    parser.add_argument("--baseline-version", default="0.2.0")
     parser.add_argument("--new-setup", type=Path, required=True)
     parser.add_argument("--new-package", type=Path, required=True)
     parser.add_argument("--version", default="0.3.0")
     parser.add_argument("--next-package", type=Path)
-    parser.add_argument("--next-version", default="0.3.1")
+    parser.add_argument("--next-version")
     parser.add_argument("--directory", type=Path)
     parser.add_argument("--output", type=Path, default=CACHE / "electron-upgrade-results.json")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    if args.old_setup is None:
+        args.old_setup = ROOT.parent / f"outputs/Media Deep Researcher {args.baseline_version} Windows安装包/MediaWorkbench.Desktop-win-preview-Setup.exe"
+    if args.next_version is None:
+        prefix, patch = args.version.rsplit(".", 1)
+        args.next_version = prefix + "." + str(int(patch) + 1)
+    return args
+
+
+def main():
+    args = parse_args()
     try:
         result = execute(args)
     except BaseException as exc:

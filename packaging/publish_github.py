@@ -87,6 +87,9 @@ def main():
     version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
     if args.tag != "v" + version:
         raise ValueError("Tag differs from source version")
+    policy_path = ROOT / "packaging" / "release-policy.json"
+    if policy_path.exists() and json.loads(policy_path.read_text(encoding="utf-8")).get("publication") == "candidate-only":
+        raise RuntimeError("Candidate builds cannot publish tags, releases or update feeds; complete the external Agent acceptance gate first")
     directory = ROOT / "release" / version
     integrity = json.loads((directory / "build-integrity.json").read_text())
     check = json.loads((directory / "SELF_TEST_RESULT.json").read_text(encoding="utf-8"))

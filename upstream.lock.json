@@ -1,0 +1,6 @@
+{
+  "project": "MediaCrawler",
+  "repository": "https://github.com/NanmiCoder/MediaCrawler",
+  "revision": "380b426000aac3d612837ed72c99808347dc94c9",
+  "policy": "Frozen for 0.4.0; customizations are inventoried in docs/ARCHITECTURE.md"
+}

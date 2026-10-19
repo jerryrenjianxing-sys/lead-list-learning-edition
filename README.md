@@ -8,7 +8,7 @@
 
 产品显示名为 Media Deep Researcher；内部应用标识及数据目录继续使用 MediaWorkbench，兼容已有安装、登录会话和 Skill 客户端。
 
-> 当前是 0.3.1 预览版，GitHub 标签为 `v0.3.1`。修复 Electron 0.3.0 的软件内更新源配置，复用现有页面、后台、账号和数据；见[版本说明](docs/RELEASE_NOTES.md)及[桌面迁移说明](docs/ELECTRON_MIGRATION.md)。真实平台、独立 Agent 推理及干净 Windows 系统仍按[验证报告](docs/VALIDATION.md)逐项验收。
+> 本分支开发 **0.4.0 候选版**：重构 Agent 接入、诊断和工作区读取，保留采集依赖、业务数据及账号档案。公开发行和更新源仍为 `v0.3.1`；候选版不创建公开标签或 Release，不覆盖日常安装。真实 TRAE、Codex 首用验收完成后才考虑公开。见[行为契约](docs/specs/0.4.0-agent-access.md)、[架构](docs/ARCHITECTURE.md)和[验收矩阵](docs/ACCEPTANCE-0.4.0.md)。
 
 ## 下载
 
@@ -22,7 +22,9 @@
 
 ## 使用
 
-安装完整包后启动「Media Deep Researcher」，在首页点击「复制 Skill」，粘贴给能执行本地命令的 Agent。Agent 按说明获取完整 Skill 和配套客户端，然后连接软件。Windows 客户端 scripts/workbench.ps1 自动找到软件和内置 Python。也可以进入任务台手动采集、导入数据、查看分析与导出成果。
+启动「Media Deep Researcher」，在首页点击「复制 Skill」，粘贴给能执行本机命令的 Agent。新卡片包含当前完整 Skill、随包 Python、客户端和实例文件的绝对路径；从任意工作目录执行一条 `connect` 命令即可验证权限。仅在本机文件不可访问时使用 ZIP 后备，不需要系统 Python 或修改执行策略。也可以进入任务台手动采集、导入数据、查看分析与导出成果。
+
+仅连接、询问能力或已有研究目标时不会自动运行整套自检。正式研究直接按用户目标执行，平台异常先查看对应状态和任务。0.4.0 候选便携包请完整解压后运行 `Start-Candidate.cmd`，使用隔离数据目录；不要双击完整安装包做隔离体验，它仍使用原安装身份。
 
 只想确认软件能否运行时，在任务台「设置 → 运行自检」点击「一键自检」；断网可选「仅检查本机」。自检无需社媒账号或模型，测试数据自动清理，不创建正式任务或研究报告。Skill 也支持 `scripts/workbench.ps1 self-test`。本机检查和游客联网试采分别给出状态，不代表七平台全部功能通过。
 
@@ -64,7 +66,7 @@ powershell -ExecutionPolicy Bypass -File packaging/build-windows-release.ps1
 
 完整包使用 Electron 44.7.0、Forge 8.0.1、Velopack 1.2.0，以及 python-build-standalone 提供的 Python 3.11.16、锁定的 Python wheels、Node.js 22.22.3 和 Playwright Chromium。构建脚本校验已锁定下载的 SHA256。Electron 自带的 Node/Chromium 用于桌面，采集继续使用独立运行时与专用账号档案。使用者无需安装 Python、Node、WebView2 或 .NET Framework；构建机仍需打包工具。应用不下载媒体，不分发独立 FFmpeg/FFprobe。
 
-版本唯一来源为 `pyproject.toml`。公开 `main` 提交触发检查；`v版本号` 标签触发 Windows 构建、自检及 GitHub 草稿上传。全部附件校验通过后才公开预览发行，标签与源码版本不一致时拒绝发布。`win-preview` 通道用于本阶段预览版本，已公开的同版本文件不覆盖。
+版本唯一来源为 `pyproject.toml`。`main` 和 `modernization/**` 提交触发检查；候选构建通过手动 GitHub Actions 或本地构建，只收集产物。`packaging/release-policy.json` 阻止候选源码调用公开发布器。未来恢复公开发布需先完成真实 Agent 验收；现有 `win-preview` 通道和已发布附件保持原状。开发流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 架构
 

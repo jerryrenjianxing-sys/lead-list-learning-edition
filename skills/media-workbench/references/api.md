@@ -1,10 +1,13 @@
 # 接口与通用分析
 
-以下请求均使用 `scripts/workbench.ps1 api METHOD PATH --json-file FILE`，或者 Python 客户端。路径以 `/api/v1` 开头；返回 JSON，非成功响应返回非零退出码。
+沿用首页短卡中的随包 Python、客户端与 `--instance` 前缀，将末尾 `connect` 替换为所需命令。例如 `api METHOD PATH --json-file FILE`；Windows 主路径直接调用随包 Python，现有 `scripts/workbench.ps1` 仍可兼容。路径以 `/api/v1` 开头；返回 JSON，非成功响应返回非零退出码。请求文件使用 UTF-8。
+
+首次接入使用 `connect`，完成受保护的轻量握手，取得版本、能力摘要与按需帮助；`check` 保留原有能力字段。正常操作由客户端处理连接与授权，不必在每个操作之前另跑一次 `connect`。细化参数按需查询 `api GET /openapi.json`。这份说明不要求读取完整 OpenAPI 或全部参考文档后才开始任务。
 
 ## 发现与采集
 
 - GET `/health`、`/capabilities`、`/platforms`、`/diagnostics`。
+- GET `/agent/handshake` 是授权就绪与能力摘要，不触发诊断、登录或采集；health 有响应本身不能证明客户端授权成功。完整 capabilities 只在需要核对具体平台能力时读取。
 - POST `/jobs`：platform 为 xhs/dy/ks/bili/wb/tieba/zhihu；crawler_type 为 search/detail/creator/login。search 提供 keywords，detail 提供逗号分隔 specified_ids，creator 提供 creator_ids。max_notes_count 和 max_comments_count 为 0 表示没有用户指定数量上限。可设 enable_comments、enable_sub_comments、enrich_profiles、headless。采集保存内容、评论与公开资料，不下载图片或视频文件。
 - GET `/jobs`、`/jobs/{id}`、`/jobs/{id}/events?after=0`。任务依次执行。
 - POST `/jobs/{id}/stop` 或 `/jobs/{id}/resume`，请求体 `{}`。

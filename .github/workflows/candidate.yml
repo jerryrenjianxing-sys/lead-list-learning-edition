@@ -1,0 +1,86 @@
+name: Windows candidate (no publication)
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    env:
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff
+        with:
+          version: '0.12.5'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.22.3'
+      - name: Require candidate policy
+        shell: pwsh
+        run: |
+          $policy = Get-Content packaging/release-policy.json -Raw | ConvertFrom-Json
+          if ($policy.publication -ne 'candidate-only') { throw 'This job accepts candidates only' }
+      - name: Build from source version without a public tag
+        run: ./packaging/build-windows-release.ps1
+      - name: Behavioral checks
+        run: |
+          node electron/node_modules/playwright/cli.js install chromium
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .venv/Scripts/python.exe -m pytest tests -q
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node electron/tests/workspace-view.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Isolated desktop, diagnostic and Agent checks
+        run: |
+          $version = .venv/Scripts/python.exe -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
+          $release = Join-Path $PWD "release/$version"
+          $app = Join-Path $PWD 'build/MediaWorkbench'
+          npm.cmd --prefix electron run smoke -- --directory $app --output (Join-Path $release 'ELECTRON_TEST_RESULT.json')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .venv/Scripts/python.exe tests/electron_desktop_smoke.py --directory $app --output (Join-Path $release 'ELECTRON_LIFECYCLE_RESULT.json')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .venv/Scripts/python.exe packaging/verify_selftest.py --directory $app --output (Join-Path $release 'SELF_TEST_RESULT.json')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .venv/Scripts/python.exe tests/agent_connect_benchmark.py --directory $app --output (Join-Path $release 'AGENT_CONNECT_RESULT.json')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify deployed baseline and private next update
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = .venv/Scripts/python.exe -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
+          $release = Join-Path $PWD "release/$version"
+          $legacy = Join-Path $PWD '.cache/baseline031'
+          New-Item -ItemType Directory -Path $legacy -Force | Out-Null
+          gh release download v0.3.1 --repo jerryrenjianxing-sys/lead-list-learning-edition --pattern 'MediaWorkbench.Desktop-win-preview-Setup.exe' --dir $legacy
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $old = Join-Path $legacy 'MediaWorkbench.Desktop-win-preview-Setup.exe'
+          if ((Get-FileHash $old -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'e8a814be681f9bff15ff54710b37524e49bb5daf3b1c8e11adc06eb59c91494a') { throw 'Baseline checksum mismatch' }
+          .venv/Scripts/python.exe packaging/prepare_test_release.py --source build/MediaWorkbench --output .cache/private-upgrade040
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $next = Get-Content '.cache/private-upgrade040/PRIVATE_TEST_RESULT.json' -Raw | ConvertFrom-Json
+          $feed = Get-Content (Join-Path $release 'releases.win-preview.json') -Raw | ConvertFrom-Json
+          $full = @($feed.Assets | Where-Object { $_.Version -eq $version -and $_.Type -eq 'Full' })
+          $setup = Join-Path $release 'MediaWorkbench.Desktop-win-preview-Setup.exe'
+          .venv/Scripts/python.exe tests/electron_upgrade_smoke.py --baseline-version 0.3.1 --old-setup $old --new-setup $setup --new-package (Join-Path $release $full[0].FileName) --version $version --next-package $next.package --next-version $next.version --output .cache/upgrade-candidate.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm.cmd --prefix electron run update-smoke -- --directory (Join-Path $PWD 'build/MediaWorkbench') --setup $setup --next-package $next.package --output (Join-Path $PWD '.cache/native-candidate.json')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .venv/Scripts/python.exe packaging/collect_delivery.py --version $version --upgrade-result .cache/upgrade-candidate.json --native-update-result .cache/native-candidate.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .venv/Scripts/python.exe packaging/prepare_candidate.py --directory $release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (git status --porcelain) { throw 'Candidate build modified tracked sources' }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-candidate-${{ github.sha }}
+          path: release/*/**
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7

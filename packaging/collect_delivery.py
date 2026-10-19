@@ -40,7 +40,10 @@ def verify_desktop_manifest(manifest):
 def public_upgrade_summary(result, version):
     prefix, patch = version.rsplit(".", 1)
     expected_next = prefix + "." + str(int(patch) + 1)
-    if result.get("ok") is not True or result.get("version") != version or result.get("baseline_version") != "0.2.0" or result.get("next_version") != expected_next or result.get("cleanup_complete") is not True:
+    # Preserve the historical 0.3 evidence contract; the 0.4 candidate must
+    # exercise the actually deployed Electron baseline rather than WinForms.
+    expected_baseline = "0.3.1" if version == "0.4.0" else "0.2.0"
+    if result.get("ok") is not True or result.get("version") != version or result.get("baseline_version") != expected_baseline or result.get("next_version") != expected_next or result.get("cleanup_complete") is not True:
         raise RuntimeError("Upgrade checks did not verify the current and private next version with cleanup")
     # Directory, install paths, fixture files, process details and raw errors
     # remain in the local cache; public evidence includes only test outcomes.

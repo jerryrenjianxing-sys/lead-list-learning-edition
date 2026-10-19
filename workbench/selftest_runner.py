@@ -1,8 +1,12 @@
 """Private self-test subprocess. Never invoked by the normal crawler API."""
 from __future__ import annotations
 
+import time
+_IMPORT_STARTED = time.monotonic()
+
 import argparse
 import asyncio
+from contextlib import contextmanager, nullcontext
 import importlib.util
 import io
 import json
@@ -11,7 +15,6 @@ import shutil
 import subprocess
 import sys
 import threading
-import time
 import zipfile
 from pathlib import Path
 from urllib.request import Request, build_opener, ProxyHandler
@@ -47,20 +50,27 @@ def classify_network(*, restricted=False, empty=False, error=None):
     return "passed", "游客搜索和详情读取通过。"
 
 
-async def network_probe():
-    from playwright.async_api import async_playwright
-    from media_platform.weibo.core import WeiboCrawler
-    from types import MethodType
+async def network_probe(timing=None):
+    timing = timing or (lambda _: nullcontext())
+    with timing("platform_import"):
+        from playwright.async_api import async_playwright
+        from media_platform.weibo.core import WeiboCrawler
+        from types import MethodType
 
     restricted = False
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
+    with timing("playwright_start"):
+        pw = await async_playwright().start()
+    browser = None
+    try:
+        with timing("browser_start"):
+            browser = await pw.chromium.launch(headless=True)
         try:
             context = await browser.new_context(locale="zh-CN")
             assert await context.cookies() == []
             await context.route("**/*", lambda route: route.abort() if route.request.resource_type in ("media", "image", "font") else route.continue_())
             page = await context.new_page()
-            await page.goto("https://m.weibo.cn", wait_until="domcontentloaded", timeout=20000)
+            with timing("network_page"):
+                await page.goto("https://m.weibo.cn", wait_until="domcontentloaded", timeout=20000)
             if "visitor.passport.weibo.cn/visitor" in page.url:
                 # Anonymous cookie bootstrap is not account authentication.
                 from playwright.async_api import TimeoutError as BrowserTimeout
@@ -79,7 +89,8 @@ async def network_probe():
             # One transport attempt; a self-test must not amplify rejected requests.
             if hasattr(client.request, "__wrapped__"):
                 client.request = MethodType(client.request.__wrapped__, client)
-            response = await client.get_note_by_keyword("Python", page=1)
+            with timing("guest_search"):
+                response = await client.get_note_by_keyword("Python", page=1)
             if not isinstance(response, dict):
                 raise ValueError("Unexpected response shape")
             cards = response.get("cards") or []
@@ -87,7 +98,8 @@ async def network_probe():
             posts += [item["mblog"] for c in cards for item in c.get("card_group") or [] if item.get("mblog")]
             if not posts:
                 return classify_network(empty=True)
-            detail = await client.get_note_info_by_id(str(posts[0]["id"]))
+            with timing("guest_detail"):
+                detail = await client.get_note_info_by_id(str(posts[0]["id"]))
             if not isinstance(detail, dict):
                 raise ValueError("Unexpected detail shape")
             if not (detail.get("mblog") or {}).get("text"):
@@ -107,6 +119,8 @@ async def network_probe():
             return classify_network(restricted=restricted, error=exc)
         finally:
             await browser.close()
+    finally:
+        await pw.stop()
 
 
 class Runner:
@@ -115,14 +129,59 @@ class Runner:
         self.progress = {}
         self.host = None
         self.info = None
+        self.pw = self.browser = None
+        self.timings = {"imports": {"state": "passed", "elapsed_seconds": round(time.monotonic() - _IMPORT_STARTED, 3)}}
         self.env = {**os.environ, "MEDIAWORKBENCH_DATA_DIR": str(directory / "data"),
                     "MEDIAWORKBENCH_INSTANCE": str(directory / "instance.json")}
         self.opener = build_opener(ProxyHandler({}))
 
+    def publish(self):
+        atomic_json(self.directory / "progress.json", {**self.progress, "timings": self.timings})
+
+    @contextmanager
+    def measure(self, name):
+        started = time.monotonic()
+        self.timings[name] = {"state": "running", "elapsed_seconds": 0, "_started": started}
+        self.publish()
+        try:
+            yield
+        except Exception:
+            self.timings[name]["state"] = "failed"
+            raise
+        else:
+            self.timings[name]["state"] = "passed"
+        finally:
+            self.timings[name]["elapsed_seconds"] = round(time.monotonic() - started, 3)
+            self.timings[name].pop("_started", None)
+            self.publish()
+
+    def shared_browser(self):
+        if self.browser is None:
+            with self.measure("playwright_import"):
+                from playwright.sync_api import sync_playwright
+            with self.measure("playwright_start"):
+                self.pw = sync_playwright().start()
+            with self.measure("browser_start"):
+                self.browser = self.pw.chromium.launch()
+        return self.browser
+
+    def close(self):
+        try:
+            with self.measure("host_stop"):
+                self.stop_host()
+        finally:
+            try:
+                if self.browser:
+                    with self.measure("browser_close"):
+                        self.browser.close()
+            finally:
+                if self.pw:
+                    self.pw.stop()
+
     def step(self, key, action):
         started = time.monotonic()
-        self.progress[key] = dict(state="running", message="正在检查…", elapsed_seconds=0)
-        atomic_json(self.directory / "progress.json", self.progress)
+        self.progress[key] = dict(state="running", message="正在检查…", elapsed_seconds=0, attempted=True, reason="")
+        self.publish()
         try:
             message = action() or "通过。"
             result = dict(state="passed", message=message)
@@ -130,15 +189,16 @@ class Runner:
             result = dict(state=exc.state, message=exc.message)
         except Exception as exc:
             result = dict(state="failed", message="检查未通过（" + type(exc).__name__ + "）。")
-        result["elapsed_seconds"] = round(time.monotonic() - started, 1)
+        result.update(elapsed_seconds=round(time.monotonic() - started, 1), attempted=True, reason="")
         self.progress[key] = result
-        atomic_json(self.directory / "progress.json", self.progress)
+        self.publish()
         return result["state"] == "passed"
 
-    def start_host(self):
-        self.host = subprocess.Popen([sys.executable, "-m", "workbench", "--port", "0"],
-                                     cwd=ROOT, env=self.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                     creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+    def start_host(self, prefix="host"):
+        with self.measure(prefix + "_spawn"):
+            self.host = subprocess.Popen([sys.executable, "-m", "workbench", "--port", "0"],
+                                         cwd=ROOT, env=self.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                         creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         deadline = time.monotonic() + 25
         while time.monotonic() < deadline:
             if self.host.poll() is not None:
@@ -175,33 +235,35 @@ class Runner:
         node = ROOT / "runtime/node/node.exe"
         executable = str(node) if node.exists() else shutil.which("node")
         assert executable, "Node unavailable"
-        result = subprocess.run([executable, "-p", "JSON.stringify({answer:21*2,temp:require('os').tmpdir()})"], capture_output=True, timeout=10, check=True)
+        with self.measure("node_start"):
+            result = subprocess.run([executable, "-p", "JSON.stringify({answer:21*2,temp:require('os').tmpdir()})"], capture_output=True, timeout=10, check=True)
         node_result = json.loads(result.stdout)
         assert node_result["answer"] == 42
         assert Path(node_result["temp"]).resolve().is_relative_to(self.directory.resolve())
-        from playwright.sync_api import sync_playwright
-        with sync_playwright() as pw:
-            browser = pw.chromium.launch()
+        browser = self.shared_browser()
+        with self.measure("runtime_page"):
+            context = browser.new_context()
             try:
-                page = browser.new_page()
+                page = context.new_page()
                 page.set_content("<title>本机运行自检</title><p>ready</p>")
                 assert page.title() == "本机运行自检"
             finally:
-                browser.close()
+                context.close()
         return "Python、Node 与浏览器可用。"
 
     def host_page(self):
-        self.start_host()
-        from playwright.sync_api import sync_playwright
-        with sync_playwright() as pw:
-            browser = pw.chromium.launch()
+        with self.measure("host_start"):
+            self.start_host()
+        browser = self.shared_browser()
+        with self.measure("host_page"):
+            context = browser.new_context()
             try:
-                page = browser.new_page()
+                page = context.new_page()
                 page.goto(self.info["base_url"], wait_until="domcontentloaded", timeout=15000)
                 page.wait_for_function("document.querySelector('#root')?.children.length > 0", timeout=10000)
                 assert "Media Deep Researcher" in page.title()
             finally:
-                browser.close()
+                context.close()
         return "独立后台与首页加载通过。"
 
     def queue(self):
@@ -231,8 +293,9 @@ class Runner:
             queue.close()
 
     def skill(self):
-        with self.opener.open(self.info["base_url"] + "/api/v1/skill", timeout=5) as response:
-            archive = zipfile.ZipFile(io.BytesIO(response.read()))
+        with self.measure("skill_download"):
+            with self.opener.open(self.info["base_url"] + "/api/v1/skill", timeout=5) as response:
+                archive = zipfile.ZipFile(io.BytesIO(response.read()))
         destination = self.directory / "skill"
         for name in archive.namelist():
             if not (destination / name).resolve().is_relative_to(destination.resolve()):
@@ -243,8 +306,9 @@ class Runner:
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         self.client = module.Client(self.directory / "instance.json")
-        result = subprocess.run([sys.executable, str(self.script), "--instance", str(self.directory / "instance.json"), "check"],
-                                env=self.env, capture_output=True, timeout=15, check=True)
+        with self.measure("skill_client"):
+            result = subprocess.run([sys.executable, str(self.script), "--instance", str(self.directory / "instance.json"), "check"],
+                                    env=self.env, capture_output=True, timeout=15, check=True)
         assert json.loads(result.stdout)["product"] == "MediaWorkbench"
         return "新解压的 Skill 客户端连接成功。"
 
@@ -280,8 +344,10 @@ class Runner:
         return "六条合成记录、请求去重、结果保存及五种格式导出通过。"
 
     def recovery(self):
-        self.stop_host()
-        self.start_host()
+        with self.measure("recovery_stop"):
+            self.stop_host()
+        with self.measure("recovery_start"):
+            self.start_host("recovery_host")
         self.client = type(self.client)(self.directory / "instance.json")
         records = self.call("GET", f"/datasets/{self.dataset_id}/records")["items"]
         assert len(records) == 6
@@ -291,7 +357,7 @@ class Runner:
 
     def network(self):
         try:
-            state, message = asyncio.run(asyncio.wait_for(network_probe(), timeout=45))
+            state, message = asyncio.run(asyncio.wait_for(network_probe(self.measure), timeout=45))
         except TimeoutError:
             state, message = "unconfirmed", "联网试采超过四十五秒，未能确认。"
         if state != "passed":
@@ -316,7 +382,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("directory", nargs="?")
     parser.add_argument("--fixture")
-    parser.add_argument("--network", action="store_true")
+    parser.add_argument("--phase", choices=("local", "network"), default="local")
+    parser.add_argument("--deadline", type=float)
     parser.add_argument("--parent", type=int)
     parser.add_argument("--parent-created", type=float)
     args = parser.parse_args()
@@ -325,7 +392,7 @@ def main():
         return
     directory = Path(args.directory).resolve()
     os.environ["MEDIAWORKBENCH_DATA_DIR"] = str(directory / "data")
-    deadline = time.monotonic() + 185
+    deadline = args.deadline if args.deadline is not None else time.monotonic() + 180
 
     def watch():
         while True:
@@ -340,7 +407,7 @@ def main():
                     except psutil.Error:
                         pass
                 os._exit(2)
-            time.sleep(0.5)
+            time.sleep(0.2)
 
     threading.Thread(target=watch, daemon=True).start()
     # The host persists ownership and assigns the Windows job before children start.
@@ -353,16 +420,20 @@ def main():
             raise RuntimeError("Diagnostic ownership was not established")
     runner = Runner(directory)
     try:
-        runner.step("runtime", runner.runtime)
-        host_ok = runner.step("host", runner.host_page)
-        runner.step("queue", runner.queue)
-        if host_ok and runner.step("skill", runner.skill):
-            if runner.step("data", runner.data):
-                runner.step("recovery", runner.recovery)
-        if args.network:
+        if args.phase == "network":
             runner.step("network", runner.network)
+        else:
+            runner.step("runtime", runner.runtime)
+            host_ok = runner.step("host", runner.host_page)
+            runner.step("queue", runner.queue)
+            if host_ok and runner.step("skill", runner.skill):
+                with runner.measure("data_exports"):
+                    data_ok = runner.step("data", runner.data)
+                if data_ok:
+                    with runner.measure("recovery"):
+                        runner.step("recovery", runner.recovery)
     finally:
-        runner.stop_host()
+        runner.close()
 
 
 if __name__ == "__main__":
