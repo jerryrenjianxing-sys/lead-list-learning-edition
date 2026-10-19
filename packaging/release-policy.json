@@ -1,4 +1,5 @@
 {
-  "publication": "candidate-only",
-  "reason": "Real TRAE and Codex first-use acceptance is required before public distribution."
+  "publication": "preview",
+  "version": "0.4.1",
+  "reason": "User approved the installed candidate and explicitly requested the Markdown clipboard feature and a new preview release. Unverified receiving Agent compatibility remains documented."
 }

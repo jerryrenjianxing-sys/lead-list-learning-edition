@@ -221,6 +221,11 @@ def make_app(root=None, *, run_queue=True):
     @app.get("/api/v1/skill")
     @app.get("/api/platform-skill")
     def skill(request: Request, format: str = "zip"):
+        if format == "file":
+            return PlainTextResponse(
+                access.connect_markdown(str(request.base_url).rstrip("/")),
+                media_type="text/markdown",
+            )
         if format == "connect":
             address = str(request.base_url).rstrip("/")
             return PlainTextResponse(

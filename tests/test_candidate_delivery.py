@@ -23,6 +23,21 @@ def test_candidate_policy_rejects_publication_before_any_upload(tmp_path, monkey
         publisher.main()
 
 
+def test_preview_approval_does_not_authorize_a_different_version(tmp_path, monkeypatch):
+    root = Path(__file__).resolve().parents[1]
+    monkeypatch.syspath_prepend(str(root / 'packaging'))
+    spec = importlib.util.spec_from_file_location('preview_publisher', root / 'packaging/publish_github.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    (tmp_path / 'packaging').mkdir()
+    (tmp_path / 'packaging/release-policy.json').write_text(json.dumps({'publication': 'preview', 'version': '0.4.1'}))
+    (tmp_path / 'pyproject.toml').write_text('[project]\nversion="0.4.2"\n')
+    monkeypatch.setattr(module, 'ROOT', tmp_path)
+    monkeypatch.setattr(sys, 'argv', ['publish_github.py', '--tag', 'v0.4.2'])
+    with pytest.raises(RuntimeError, match='approved preview version'):
+        module.main()
+
+
 def test_candidate_portable_has_explicit_isolated_start_and_checksums(tmp_path):
     root = Path(__file__).resolve().parents[1]
     original = tmp_path / 'MediaWorkbench.Desktop-win-preview-Portable.zip'

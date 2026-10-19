@@ -21,6 +21,13 @@ type WebViewBridge = {
   removeEventListener: (name: string, handler: (event: MessageEvent) => void) => void;
 };
 
+export function desktopSkillCopy(): ((options: { name: string }) => Promise<{ kind: "file"; name: string; size: number }>) | undefined {
+  const host = window as unknown as {
+    mdrDesktop?: { copySkillFile?: (options: { name: string }) => Promise<{ kind: "file"; name: string; size: number }> };
+  };
+  return host.mdrDesktop?.copySkillFile;
+}
+
 export function desktopUpdates(): DesktopUpdates | undefined {
   const host = window as unknown as {
     mdrDesktop?: DesktopUpdates;

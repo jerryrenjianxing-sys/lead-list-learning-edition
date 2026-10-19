@@ -98,21 +98,33 @@ class AgentAccess:
             "help": dict(self.help),
         }
 
-    def connect_text(self, base_url: str) -> str:
+    def _connection_parts(self, base_url: str) -> tuple[str, str, str]:
         def quoted(value):
             return "'" + str(value).replace("'", "''") + "'"
 
         skill = self.skill_dir / "SKILL.md"
         script = self.skill_dir / "scripts" / "workbench.py"
         command = f"& {quoted(self.python_path)} {quoted(script)} --instance {quoted(self.instance_path)} connect"
-        return (
-            f"请使用本机 {DISPLAY_NAME} 协助我。读取完整 Skill：{skill}。\n"
-            f"Windows 客户端（使用软件内置 Python）：\n{command}\n"
+        guide = f"请使用本机 {DISPLAY_NAME} 协助我。读取完整 Skill：{skill}。"
+        behavior = (
             "客户端会确认本机身份和访问权限；不要读取或输出实例文件、访问凭据或 Cookie。"
             "连接后按我的要求执行；没有具体任务时简短说明能力。连接、能力介绍和正常研究不运行自检；"
             "只有我要求验证安装、整套运行或排查基础故障时，才按需运行独立自检。"
             "分析主题、方法、字段及输出由我决定，正常任务进度和成果保存回软件。\n"
             f"只有本机文件无法访问时再获取备用完整 Skill ZIP：{base_url.rstrip('/')}/api/v1/skill。"
             "若 Agent 在云端或其他电脑，说明需要本机执行能力，不重复尝试 localhost。"
+        )
+        return guide, command, behavior
+
+    def connect_text(self, base_url: str) -> str:
+        guide, command, behavior = self._connection_parts(base_url)
+        return f"{guide}\nWindows 客户端（使用软件内置 Python）：\n{command}\n{behavior}"
+
+    def connect_markdown(self, base_url: str) -> str:
+        guide, command, behavior = self._connection_parts(base_url)
+        return (
+            f"# {DISPLAY_NAME} Skill\n\n{guide}\n\n"
+            f"使用软件内置 Python 完成本机连接：\n\n```powershell\n{command}\n```\n\n{behavior}\n\n"
+            "这是聊天附件形式的本机接入入口，文件可以改名；完整 Skill 和客户端由已安装的软件提供。\n"
         )
 

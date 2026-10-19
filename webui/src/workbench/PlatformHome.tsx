@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { loadSkillMarkdown, fetchLocalApi } from "./home-loader";
 import ThemeToggle from "./ThemeToggle";
+import { desktopSkillCopy } from "./desktop";
 const API = "";
 import "./skill-home.css";
 
@@ -75,6 +76,8 @@ export default function PlatformHome({
   legacySession?: boolean;
 }) {
   const [copy, setCopy] = useState<ActionState>("idle");
+  const [filename, setFilename] = useState("Media Deep Researcher.md");
+  const [feedback, setFeedback] = useState("");
   const [manual, setManual] = useState(""),
     [paused, setPaused] = useState(false);
   const copying = useRef(false),
@@ -87,11 +90,19 @@ export default function PlatformHome({
       manualText.current?.select();
     }
   }, [manual]);
-  async function copySkill() {
+  async function copySkill(textOnly = false) {
     if (copying.current) return;
     copying.current = true;
     setCopy("loading");
+    setFeedback("");
     try {
+      const copyFile = desktopSkillCopy();
+      if (copyFile && !textOnly) {
+        const result = await copyFile({ name: filename });
+        setCopy("done");
+        setFeedback(`已复制文件 ${result.name}，在 Agent 中粘贴为附件即可。不支持文件粘贴时，请用“复制文字”。`);
+        return;
+      }
       const markdown = await loadSkillMarkdown(() =>
         fetchLocalApi(
           `${API}/api/platform-skill?format=connect`,
@@ -102,12 +113,14 @@ export default function PlatformHome({
       try {
         await navigator.clipboard.writeText(markdown);
         setCopy("done");
+        setFeedback("已复制文字，粘贴给你的 Agent 即可。");
       } catch {
         setCopy("idle");
         setManual(markdown);
       }
-    } catch {
+    } catch (error) {
       setCopy("error");
+      setFeedback(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "") : "复制失败，请重试，或使用复制文字。");
     } finally {
       copying.current = false;
     }
@@ -159,6 +172,15 @@ export default function PlatformHome({
                 ? "已复制"
                 : "复制 Skill"}
           </button>
+          <details className="skill-copy-options">
+            <summary>更多复制选项</summary>
+            <div className="skill-copy-options-panel">
+              <label htmlFor="skill-file-name">Skill 文件名</label>
+              <input id="skill-file-name" value={filename} maxLength={100} disabled={copy === "loading"} onChange={event => { setFilename(event.target.value); setCopy("idle"); setFeedback(""); }} />
+              <p>可改名，保留 .md 后缀。软件需在本机运行。</p>
+              <button type="button" className="skill-button skill-button-secondary" disabled={copy === "loading"} onClick={() => void copySkill(true)}>复制文字</button>
+            </div>
+          </details>
         </div>
         <p className="skill-format">
           复制接入 · 本地运行 · 使用自己的 Agent
@@ -166,10 +188,10 @@ export default function PlatformHome({
         <div className="skill-feedback" aria-live="polite" aria-atomic="true">
           {copy === "error" ? (
             <p className="skill-error">
-              读取失败，请重试复制，或到任务台检查本机服务。
+              {feedback || "复制失败，请重试，或到任务台检查本机服务。"}
             </p>
           ) : copy === "done" ? (
-            <p>Skill 已复制，粘贴给你的 Agent 即可。</p>
+            <p>{feedback}</p>
           ) : null}
         </div>
         {legacySession ? (

@@ -11,6 +11,11 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def upgrade_baseline(version):
+    """Keep historical 0.3 evidence while verifying 0.4 against deployed Electron."""
+    return "0.3.1" if tuple(map(int, version.split('.'))) >= (0, 4, 0) else "0.2.0"
+
+
 def full_package(release, version):
     feed = json.loads((release / "releases.win-preview.json").read_text(encoding="utf-8"))
     candidates = [a for a in feed["Assets"] if a["PackageId"] == "MediaWorkbench.Desktop" and a["Version"] == version and a["Type"] == "Full"]
@@ -40,9 +45,7 @@ def verify_desktop_manifest(manifest):
 def public_upgrade_summary(result, version):
     prefix, patch = version.rsplit(".", 1)
     expected_next = prefix + "." + str(int(patch) + 1)
-    # Preserve the historical 0.3 evidence contract; the 0.4 candidate must
-    # exercise the actually deployed Electron baseline rather than WinForms.
-    expected_baseline = "0.3.1" if version == "0.4.0" else "0.2.0"
+    expected_baseline = upgrade_baseline(version)
     if result.get("ok") is not True or result.get("version") != version or result.get("baseline_version") != expected_baseline or result.get("next_version") != expected_next or result.get("cleanup_complete") is not True:
         raise RuntimeError("Upgrade checks did not verify the current and private next version with cleanup")
     # Directory, install paths, fixture files, process details and raw errors

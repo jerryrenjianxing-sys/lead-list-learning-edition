@@ -3,7 +3,8 @@ import { UpdateManager } from 'velopack';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DesktopGuard } from './guard';
-import { HostController } from './host';
+import { HostController, hostRequest } from './host';
+import { copySkillFile } from './skill-clipboard';
 import { externalUrl, trustedSource } from './policy';
 import { DesktopUpdater, githubRelease } from './updates';
 import { DISPLAY_NAME, Paths } from './types';
@@ -60,6 +61,15 @@ function installBridge(): void {
   for (const [action, handler] of Object.entries(handlers)) ipcMain.handle(`mdr:update:${action}`, event => {
     if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || !host.instance || !trustedSource(event.senderFrame.url, host.instance.base_url)) throw new Error('Desktop access denied');
     return handler();
+  });
+  ipcMain.handle('mdr:skill:copy', (event, options: unknown) => {
+    if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame
+        || !host.instance || !trustedSource(event.senderFrame.url, host.instance.base_url)) throw new Error('Desktop access denied');
+    return copySkillFile(paths.data, options, async () => {
+      const response = await hostRequest(host.instance!, '/api/v1/skill?format=file');
+      if (!response.ok) throw new Error('读取本机 Skill 失败，请重试。');
+      return response.text();
+    });
   });
 }
 async function launch(): Promise<void> {

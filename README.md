@@ -8,12 +8,12 @@
 
 产品显示名为 Media Deep Researcher；内部应用标识及数据目录继续使用 MediaWorkbench，兼容已有安装、登录会话和 Skill 客户端。
 
-> 本分支开发 **0.4.0 候选版**：重构 Agent 接入、诊断和工作区读取，保留采集依赖、业务数据及账号档案。公开发行和更新源仍为 `v0.3.1`；候选版不创建公开标签或 Release，不覆盖日常安装。真实 TRAE、Codex 首用验收完成后才考虑公开。见[行为契约](docs/specs/0.4.0-agent-access.md)、[架构](docs/ARCHITECTURE.md)和[验收矩阵](docs/ACCEPTANCE-0.4.0.md)。
+> **0.4.1 预览版**：首页可复制真正的 Markdown Skill 文件，支持改名和文字备用。沿用0.4.0的轻量接入、诊断及任务台改进，保留依赖、业务数据和账号档案。用户本机试用后批准推送新版；真实 Agent 附件粘贴兼容性及新会话验收仍单独记录。见[文件接入规格](docs/specs/0.4.1-skill-file.md)、[架构](docs/ARCHITECTURE.md)和[验证说明](docs/VALIDATION.md)。
 
 ## 下载
 
-- [下载 Windows x64 安装包](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/download/v0.3.1/MediaWorkbench.Desktop-win-preview-Setup.exe)：包含 Electron、Python、Node 和采集浏览器，无需自行配置开发环境。
-- [新版发行页](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/tag/v0.3.1)：便携版、完整源码、Skill、更新包、校验值与验收说明。
+- [下载 Windows x64 安装包](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/download/v0.4.1/MediaWorkbench.Desktop-win-preview-Setup.exe)：包含 Electron、Python、Node 和采集浏览器，无需自行配置开发环境。
+- [新版发行页](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/tag/v0.4.1)：便携版、完整源码、Skill、更新包、校验值与验收说明。
 - [0.3.0 发行页](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/tag/v0.3.0)：保留 Electron 首版历史；其软件内更新源存在问题，请使用新版完整安装包升级。
 - [0.2.0 发行页](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/tag/v0.2.0)：保留迁移前版本及验证记录。
 - [旧版下载](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/tag/v2026.07.29)：保留 2026 年 7 月的学习版。
@@ -22,17 +22,17 @@
 
 ## 使用
 
-启动「Media Deep Researcher」，在首页点击「复制 Skill」，粘贴给能执行本机命令的 Agent。新卡片包含当前完整 Skill、随包 Python、客户端和实例文件的绝对路径；从任意工作目录执行一条 `connect` 命令即可验证权限。仅在本机文件不可访问时使用 ZIP 后备，不需要系统 Python 或修改执行策略。也可以进入任务台手动采集、导入数据、查看分析与导出成果。
+启动「Media Deep Researcher」，在首页点击「复制 Skill」，将 `.md` 文件粘贴给能执行本机命令的 Agent。「更多复制选项」可修改文件名；不支持文件粘贴时选择「复制文字」。普通浏览器和旧桌面仍复制文字。附件是本机入口，包含完整 Skill、随包 Python、客户端和实例文件的绝对路径；从任意工作目录执行一条 `connect` 命令即可验证权限。仅在本机文件不可访问时使用 ZIP 后备，不需要系统 Python 或修改执行策略。也可以进入任务台手动采集、导入数据、查看分析与导出成果。
 
-仅连接、询问能力或已有研究目标时不会自动运行整套自检。正式研究直接按用户目标执行，平台异常先查看对应状态和任务。0.4.0 候选便携包请完整解压后运行 `Start-Candidate.cmd`，使用隔离数据目录；不要双击完整安装包做隔离体验，它仍使用原安装身份。
+仅连接、询问能力或已有研究目标时不会自动运行整套自检。正式研究直接按用户目标执行，平台异常先查看对应状态和任务。安装包沿用原产品身份并保留数据；历史0.4.0候选的隔离启动方式见其自带说明。
 
 只想确认软件能否运行时，在任务台「设置 → 运行自检」点击「一键自检」；断网可选「仅检查本机」。自检无需社媒账号或模型，测试数据自动清理，不创建正式任务或研究报告。Skill 也支持 `scripts/workbench.ps1 self-test`。本机检查和游客联网试采分别给出状态，不代表七平台全部功能通过。
 
 要体验分析，可点击「加载演示数据」。这是合成的通勤反馈；分析目标、方法、字段、数量和输出形式由用户决定。Agent 能保存任意结构化结果、证据引用和其他文件附件。
 
-发行附件和本地 `release/0.3.1` 目录包含完整安装包 `MediaWorkbench.Desktop-win-preview-Setup.exe`、便携包、Skill ZIP、源码 ZIP 和 SHA256 校验表。系统验收目标为 Windows 10/11 x64；干净系统验收尚待完成。
+发行附件和本地 `release/0.4.1` 目录包含完整安装包 `MediaWorkbench.Desktop-win-preview-Setup.exe`、便携包、Skill ZIP、源码 ZIP 和 SHA256 校验表。系统验收目标为 Windows 10/11 x64；干净系统验收尚待完成。
 
-已经安装 0.3.0 的用户，请用 0.3.1 完整安装包覆盖升级一次，以修正该版本的软件内更新源；任务、数据和登录档案保留。0.2.0 可通过原有更新通道或完整安装包升级到 Electron；0.1.1 首次使用完整安装包接入更新通道。修正后在设置或托盘检查更新，自动检查最多每天一次，只提示；下载和安装分别由用户点击。采集或自检运行时暂缓安装，安装前备份数据。
+已经安装 0.3.0 的用户，请用新版完整安装包覆盖升级一次，以修正该版本的软件内更新源；任务、数据和登录档案保留。0.2.0 可通过原有更新通道或完整安装包升级到 Electron；0.1.1 首次使用完整安装包接入更新通道。修正后在设置或托盘检查更新，自动检查最多每天一次，只提示；下载和安装分别由用户点击。采集或自检运行时暂缓安装，安装前备份数据。
 
 - 七个平台：小红书、抖音、快手、哔哩哔哩、微博、贴吧、知乎；具体能力通过接口与平台登录页展示。
 - 持久化队列：界面与 Skill 操作同一任务，刷新页面或关闭 Agent 不丢队列。

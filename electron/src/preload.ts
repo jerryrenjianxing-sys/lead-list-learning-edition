@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { DesktopBridge, UpdateState } from './types';
 // No Electron event or caller-selected channel crosses into the page.
 const bridge: DesktopBridge = {
+  copySkillFile: options => ipcRenderer.invoke('mdr:skill:copy', options),
   getUpdateStatus: () => ipcRenderer.invoke('mdr:update:status'),
   checkForUpdates: () => ipcRenderer.invoke('mdr:update:check'),
   downloadUpdate: () => ipcRenderer.invoke('mdr:update:download'),

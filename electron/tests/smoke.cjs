@@ -67,7 +67,7 @@ async function main() {
       assert.equal(state.version, instance.version);
       assert.equal(state.isolated, true); assert.equal(state.sandbox, true); assert.equal(state.node, false);
       assert.equal(await page.evaluate(() => typeof window.require), 'undefined');
-      assert.deepEqual(await page.evaluate(() => Object.keys(window.mdrDesktop).sort()), ['checkForUpdates','downloadUpdate','getUpdateStatus','installUpdate','onUpdateState'].sort());
+      assert.deepEqual(await page.evaluate(() => Object.keys(window.mdrDesktop).sort()), ['copySkillFile','checkForUpdates','downloadUpdate','getUpdateStatus','installUpdate','onUpdateState'].sort());
       assert.equal(typeof (await page.evaluate(() => window.mdrDesktop.getUpdateStatus())).state, 'string');
     });
     await record('skill-copy-from-home', async () => {
@@ -80,11 +80,13 @@ async function main() {
       await page.waitForFunction(previous => document.documentElement.dataset.theme !== previous, before);
       const after = await page.evaluate(() => document.documentElement.dataset.theme);
       assert(['light','dark'].includes(after));
+      await page.locator('.skill-theme-transition').waitFor({ state: 'hidden' });
       await page.screenshot({ path: path.join(temporary, `${after}-home.png`) });
       await page.reload();
       await page.waitForFunction(value => document.documentElement.dataset.theme === value, after);
       await page.getByRole('button', { name: /切换到.*主题/ }).click();
       await page.waitForFunction(previous => document.documentElement.dataset.theme !== previous, after);
+      await page.locator('.skill-theme-transition').waitFor({ state: 'hidden' });
       await page.screenshot({ path: path.join(temporary, 'other-theme-home.png') });
     });
     await record('subframes-have-no-desktop-bridge', async () => {
@@ -105,6 +107,9 @@ async function main() {
       const extraPage = await waiting;
       assert(await extraPage.evaluate(async () => {
         try { await window.mdrDesktop.getUpdateStatus(); return false; } catch { return true; }
+      }));
+      assert(await extraPage.evaluate(async () => {
+        try { await window.mdrDesktop.copySkillFile({ name: 'forbidden.md' }); return false; } catch { return true; }
       }));
       await desktop.evaluate(({ BrowserWindow }, id) => BrowserWindow.fromId(id).destroy(), extraWindowId);
     });

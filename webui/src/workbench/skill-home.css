@@ -164,6 +164,18 @@
   font-weight: 550;
   white-space: nowrap;
 }
+.skill-copy-options { position: relative; text-align: left; }
+.skill-copy-options summary { cursor: pointer; color: var(--sh-muted); font-size: 13px; padding: 12px 4px; }
+.skill-copy-options-panel {
+  position: absolute; top: 100%; right: 0; z-index: 10;
+  width: min(290px, calc(100vw - 40px)); padding: 18px;
+  border: 1px solid var(--sh-line); border-radius: 10px;
+  background: var(--sh-bg); box-shadow: 0 10px 30px #0002;
+}
+.skill-copy-options-panel label { display: block; font-size: 13px; margin-bottom: 8px; }
+.skill-copy-options-panel input { width: 100%; box-sizing: border-box; padding: 9px; border: 1px solid var(--sh-line); border-radius: 5px; color: inherit; background: var(--sh-bg); }
+.skill-copy-options-panel p { font-size: 12px; color: var(--sh-muted); line-height: 1.6; }
+.skill-copy-options-panel .skill-button { width: 100%; min-height: 40px; }
 .skill-button {
   min-height: 50px;
   min-width: 160px;

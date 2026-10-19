@@ -7,7 +7,9 @@ export interface UpdateState { state: string; message?: string; progress?: numbe
 export interface Instance { product: string; version: string; api_version: number; base_url: string; token: string; pid: number; data_directory: string }
 export interface Paths { root: string; python: string; data: string; instance: string; version: string }
 export interface Asset { PackageId: string; Version: string; Type: string; FileName: string; Size: number; SHA256: string; NotesMarkdown?: string }
+export interface SkillFileCopy { kind: 'file'; name: string; size: number }
 export interface DesktopBridge {
+  copySkillFile(options: { name?: string }): Promise<SkillFileCopy>;
   getUpdateStatus(): Promise<UpdateState>;
   checkForUpdates(): Promise<UpdateState>;
   downloadUpdate(): Promise<UpdateState>;

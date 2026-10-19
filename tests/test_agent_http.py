@@ -52,3 +52,21 @@ def test_home_bootstrap_binds_the_actual_instance_and_installed_client(tmp_path,
         assert '--instance' in text and ' connect' in text
         assert app.state.token not in text
         assert '备用' in text and len(text) < 2000
+
+
+def test_markdown_attachment_is_a_renamable_local_entry_without_credentials(tmp_path, monkeypatch):
+    instance = tmp_path / '中文 instance.json'
+    monkeypatch.setenv('MEDIAWORKBENCH_INSTANCE', str(instance))
+    app = make_app(tmp_path / 'data', run_queue=False)
+    with TestClient(app) as client:
+        response = client.get('/api/v1/skill?format=file')
+        assert response.status_code == 200
+        assert response.headers['content-type'].startswith('text/markdown')
+        text = response.text
+        assert text.startswith('# Media Deep Researcher')
+        assert '```powershell' in text and '--instance' in text and ' connect' in text
+        assert str(SKILL / 'SKILL.md') in text and str(instance) in text
+        assert app.state.token not in text
+        assert 'references/' not in text  # References resolve through the installed Skill.
+        assert not app.state.db.query('SELECT id FROM jobs')
+        assert app.state.self_tests.view() is None

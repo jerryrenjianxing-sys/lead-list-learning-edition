@@ -1,4 +1,4 @@
-# 0.4.0 候选版架构与维护入口
+# 0.4 架构与维护入口
 
 本文件描述当前源码的实际职责，配合 [0.4.0 规格](specs/0.4.0-agent-access.md)、[开发约定](../CONTRIBUTING.md)、[术语](../GLOSSARY.md) 和 [就绪与诊断 ADR](adr/0001-readiness-and-diagnostics.md) 使用。版本以 `pyproject.toml` 为准；本轮保留 Electron、Python、SQLite schema 4 和采集依赖，重做接入及诊断流程，不全面重写项目。
 
@@ -66,7 +66,9 @@ flowchart TD
 
 默认业务根为 `%LOCALAPPDATA%/MediaWorkbench/data`，发现文件为其父目录 `instance.json`；原 `MEDIAWORKBENCH_DATA_DIR` 和 `MEDIAWORKBENCH_INSTANCE` 可覆盖。浏览器档案、加密快照及成果保持现有目录；Electron 缓存位于数据根的 `electron-ui`。核心 Skill/客户端由安装维护，用户定制资料另存数据目录；本轮不引入 MediaSail 的可写 workspace 及全量三方合并机制。
 
-发布版本只有 `pyproject.toml` 一个来源。构建经 Forge 生成 Electron 目录，Velopack 管理原产品身份 `MediaWorkbench.Desktop`、主程序 `MediaWorkbench.exe` 和 win-preview。当前任务仅交付 0.4.0 候选并推送开发分支；不发布标签、Release，不切换正式更新源，不替换用户日常安装。[验收记录](ACCEPTANCE-0.4.0.md) 区分源码检查、隔离候选和真实外部 Agent 验收。
+发布版本只有 `pyproject.toml` 一个来源。构建经 Forge 生成 Electron 目录，Velopack 管理原产品身份 `MediaWorkbench.Desktop`、主程序 `MediaWorkbench.exe` 和 win-preview。0.4.0候选记录保留；用户本机试用后批准发布0.4.1预览，发布策略绑定具体版本。GitHub标签触发检查、打包、隔离升级和草稿附件核验，成功后发布；真实外部Agent验收仍如实标为待验证。
+
+0.4.1首页文件复制通过受限preload只传文件名，主进程从AgentAccess同源Markdown接口读取内容，写入当前数据目录的独立分享文件，再调用Electron文件剪贴板。分享文件不随退出删除；普通浏览器使用原文字路径，完整Skill与附件入口分开维护。见[规格](specs/0.4.1-skill-file.md)。
 
 ## MediaCrawler 固定基线与继承补丁清单
 

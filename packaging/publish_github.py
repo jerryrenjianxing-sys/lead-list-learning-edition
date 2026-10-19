@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import time
 import tomllib
-from collect_delivery import full_package
+from collect_delivery import full_package, upgrade_baseline
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = "jerryrenjianxing-sys/lead-list-learning-edition"
@@ -76,7 +76,7 @@ def create_draft(tag, version):
 def verify_release_checks(version, integrity, check, desktop_check, lifecycle_check, upgrade_check, native_update_check):
     prefix, patch = version.rsplit(".", 1)
     next_version = prefix + "." + str(int(patch) + 1)
-    if integrity.get("version") != version or integrity["packaged_manifest_dirty"] or check["local_state"] != "passed" or not check["cleanup_complete"] or desktop_check.get("ok") is not True or desktop_check.get("version") != version or desktop_check.get("cleanup_complete") is not True or lifecycle_check.get("ok") is not True or lifecycle_check.get("version") != version or integrity.get("desktop", {}).get("kind") != "electron" or upgrade_check.get("ok") is not True or upgrade_check.get("version") != version or upgrade_check.get("baseline_version") != "0.2.0" or upgrade_check.get("next_version") != next_version or upgrade_check.get("cleanup_complete") is not True or native_update_check.get("ok") is not True or native_update_check.get("version") != version or native_update_check.get("next_version") != next_version or native_update_check.get("cleanup_complete") is not True or native_update_check.get("implementation_override") is not False:
+    if integrity.get("version") != version or integrity["packaged_manifest_dirty"] or check["local_state"] != "passed" or not check["cleanup_complete"] or desktop_check.get("ok") is not True or desktop_check.get("version") != version or desktop_check.get("cleanup_complete") is not True or lifecycle_check.get("ok") is not True or lifecycle_check.get("version") != version or integrity.get("desktop", {}).get("kind") != "electron" or upgrade_check.get("ok") is not True or upgrade_check.get("version") != version or upgrade_check.get("baseline_version") != upgrade_baseline(version) or upgrade_check.get("next_version") != next_version or upgrade_check.get("cleanup_complete") is not True or native_update_check.get("ok") is not True or native_update_check.get("version") != version or native_update_check.get("next_version") != next_version or native_update_check.get("cleanup_complete") is not True or native_update_check.get("implementation_override") is not False:
         raise RuntimeError("Release did not pass deterministic validation")
 
 
@@ -88,8 +88,12 @@ def main():
     if args.tag != "v" + version:
         raise ValueError("Tag differs from source version")
     policy_path = ROOT / "packaging" / "release-policy.json"
-    if policy_path.exists() and json.loads(policy_path.read_text(encoding="utf-8")).get("publication") == "candidate-only":
-        raise RuntimeError("Candidate builds cannot publish tags, releases or update feeds; complete the external Agent acceptance gate first")
+    if policy_path.exists():
+        policy = json.loads(policy_path.read_text(encoding="utf-8"))
+        if policy.get("publication") == "candidate-only":
+            raise RuntimeError("Candidate builds cannot publish tags, releases or update feeds; complete the external Agent acceptance gate first")
+        if policy.get("publication") != "preview" or policy.get("version") != version:
+            raise RuntimeError("Publication requires the approved preview version")
     directory = ROOT / "release" / version
     integrity = json.loads((directory / "build-integrity.json").read_text())
     check = json.loads((directory / "SELF_TEST_RESULT.json").read_text(encoding="utf-8"))
@@ -97,13 +101,16 @@ def main():
     lifecycle_check = json.loads((directory / "ELECTRON_LIFECYCLE_RESULT.json").read_text(encoding="utf-8"))
     upgrade_check = json.loads((directory / "ELECTRON_UPGRADE_RESULT.json").read_text(encoding="utf-8"))
     native_update_check = json.loads((directory / "ELECTRON_NATIVE_UPDATE_RESULT.json").read_text(encoding="utf-8"))
+    skill_file_check = json.loads((directory / "SKILL_FILE_RESULT.json").read_text(encoding="utf-8"))
+    if skill_file_check.get("ok") is not True or skill_file_check.get("version") != version or skill_file_check.get("cleanup_complete") is not True:
+        raise RuntimeError("Markdown file clipboard did not pass validation")
     verify_release_checks(version, integrity, check, desktop_check, lifecycle_check, upgrade_check, native_update_check)
     commit = json.loads(gh("api", f"repos/{REPO}/commits/{args.tag}").stdout)["sha"]
     if commit != integrity["packaged_manifest_revision"] or commit != integrity["source_archive_revision"]:
         raise ValueError("Public tag and packaged source differ")
     files = sorted(p for p in directory.iterdir() if p.is_file())
     names = {p.name for p in files}
-    required = {"releases.win-preview.json", full_package(directory, version).name, "MediaWorkbench-Skill.zip", "SHA256SUMS.txt", "LICENSE", "THIRD_PARTY_NOTICES.md", "ELECTRON_TEST_RESULT.json", "ELECTRON_LIFECYCLE_RESULT.json", "ELECTRON_UPGRADE_RESULT.json", "ELECTRON_NATIVE_UPDATE_RESULT.json"}
+    required = {"releases.win-preview.json", full_package(directory, version).name, "MediaWorkbench-Skill.zip", "SHA256SUMS.txt", "LICENSE", "THIRD_PARTY_NOTICES.md", "ELECTRON_TEST_RESULT.json", "ELECTRON_LIFECYCLE_RESULT.json", "ELECTRON_UPGRADE_RESULT.json", "ELECTRON_NATIVE_UPDATE_RESULT.json", "SKILL_FILE_RESULT.json"}
     if not required <= names or not any(n.endswith("Setup.exe") for n in names):
         raise ValueError("Missing release assets")
     hashes = {}
