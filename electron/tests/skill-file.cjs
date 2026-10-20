@@ -68,23 +68,28 @@ async function main() {
     await page.getByRole('button', { name: '复制 Skill', exact: true }).click();
     await page.getByText('已复制 MD 文件', { exact: true }).waitFor();
     assert.equal(await page.locator('.skill-feedback').innerText(), '已复制 MD 文件');
-    await page.getByText('修改文件名', { exact: true }).click();
-    const name = page.getByRole('textbox', { name: 'Skill 文件名' });
-    await name.fill('研究入口.md');
-    await page.getByRole('button', { name: '复制 Skill', exact: true }).click();
+    assert.deepEqual(await page.locator('.skill-actions').getByRole('link').allTextContents(), ['任务台']);
+    assert.deepEqual(await page.locator('.skill-actions').getByRole('button').allTextContents(), ['已复制']);
+    assert.equal(await page.locator('.skill-actions details, .skill-actions input').count(), 0);
+    assert.equal(await page.getByText('修改文件名', { exact: true }).count(), 0);
+    const firstHomepageFiles = await copiedFiles();
+    assert.equal(path.basename(firstHomepageFiles[0]), 'Media Deep Researcher.md');
+    const firstHomepageContent = fs.readFileSync(firstHomepageFiles[0], 'utf8');
+    await page.getByRole('button', { name: '已复制', exact: true }).click();
     await page.getByText('已复制 MD 文件', { exact: true }).waitFor();
-    const renamed = await copiedFiles();
-    assert.equal(path.basename(renamed[0]), '研究入口.md');
-    assert.notEqual(renamed[0], files[0]);
+    const repeated = await copiedFiles();
+    assert.equal(path.basename(repeated[0]), 'Media Deep Researcher.md');
+    assert.notEqual(repeated[0], firstHomepageFiles[0]);
+    assert.equal(fs.readFileSync(firstHomepageFiles[0], 'utf8'), firstHomepageContent);
     assert.equal(fs.readFileSync(files[0], 'utf8'), content);
-    retainedFile = renamed[0];
-    checks.push('homepage-rename-preserves-previous-clipboard-file');
+    retainedFile = repeated[0];
+    checks.push('homepage-default-name-repeat-copy-preserves-previous-file');
     for (const invalid of [{ name: '../outside.md' }, { name: 'CON.md' }, { name: '.md' }, { name: 'a.txt' }, { name: 'a.md', content: 'untrusted' }]) {
       assert.equal(await page.evaluate(async value => {
         try { await window.mdrDesktop.copySkillFile(value); return false; } catch { return true; }
       }, invalid), true);
     }
-    assert.deepEqual(await copiedFiles(), renamed);
+    assert.deepEqual(await copiedFiles(), repeated);
     checks.push('invalid-file-names-and-arbitrary-content-rejected');
     assert.equal(await page.getByRole('button', { name: '复制文字', exact: true }).count(), 0);
     assert.equal(await page.getByRole('dialog').count(), 0);
@@ -96,8 +101,9 @@ async function main() {
     for (const mode of ['light', 'dark']) {
       await page.evaluate(value => { document.documentElement.dataset.theme = value; }, mode);
       await desktop.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0].setSize(...size), [760, 600]);
-      await name.focus();
-      assert.equal(await name.evaluate(el => el === document.activeElement), true);
+      const copyButton = page.getByRole('button', { name: '已复制', exact: true });
+      await copyButton.focus();
+      assert.equal(await copyButton.evaluate(el => el === document.activeElement), true);
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
       await page.screenshot({ path: path.join(temporary, `${mode}-skill-file.png`) });
     }

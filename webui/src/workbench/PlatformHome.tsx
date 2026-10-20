@@ -73,7 +73,6 @@ export default function PlatformHome({
   legacySession?: boolean;
 }) {
   const [copy, setCopy] = useState<ActionState>("idle");
-  const [filename, setFilename] = useState("Media Deep Researcher.md");
   const [feedback, setFeedback] = useState("");
   const [paused, setPaused] = useState(false);
   const copying = useRef(false);
@@ -89,7 +88,7 @@ export default function PlatformHome({
         setFeedback("请在新版桌面软件中复制");
         return;
       }
-      await copyFile({ name: filename });
+      await copyFile({ name: "Media Deep Researcher.md" });
       setCopy("done");
       setFeedback("已复制 MD 文件");
     } catch (error) {
@@ -146,13 +145,6 @@ export default function PlatformHome({
                 ? "已复制"
                 : "复制 Skill"}
           </button>
-          <details className="skill-copy-options">
-            <summary>修改文件名</summary>
-            <div className="skill-copy-options-panel">
-              <label htmlFor="skill-file-name">Skill 文件名</label>
-              <input id="skill-file-name" value={filename} maxLength={100} disabled={copy === "loading"} onChange={event => { setFilename(event.target.value); setCopy("idle"); setFeedback(""); }} />
-            </div>
-          </details>
         </div>
         <p className="skill-format">
           复制接入 · 本地运行 · 使用自己的 Agent

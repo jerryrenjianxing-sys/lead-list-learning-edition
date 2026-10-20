@@ -89,3 +89,5 @@ flowchart TD
 复核命令：`git diff --name-status 380b426000aac3d612837ed72c99808347dc94c9 HEAD -- api cmd_arg config media_platform proxy store tools pyproject.toml uv.lock`。继承差异不是本轮新增补丁数；后续确实更新上游时须重新审计，并保留各自 LICENSE/NOTICE，不能把整个项目统一改为 MIT。
 
 0.4.2首页只调用MD文件复制桥，保留改名；移除前端文字回退和手动复制弹窗。旧HTTP文字/ZIP接口仅为兼容保留；普通浏览器与旧桌面显示简短升级提示，不获取接入文本。
+
+0.4.3删除首页文件名编辑及展开控件，接入区仅保留任务台和复制Skill。首页使用固定默认文件名，文件复制桥的兼容接口及安全校验保持不变。
