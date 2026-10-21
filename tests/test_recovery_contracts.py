@@ -141,6 +141,102 @@ def test_retry_preserves_each_attempt_and_its_events(tmp_path):
         assert events and all(e["attempt"] == 1 for e in events)
 
 
+def test_paged_attempts_do_not_hide_legacy_history_limitations(tmp_path):
+    with host(tmp_path, "print('ERROR fixture')") as client:
+        job = client.post(
+            "/api/v1/jobs", json={"platform": "dy", "keywords": "fixture"}
+        ).json()
+        settled(client, job["id"])
+        client.app.state.db.execute(
+            "UPDATE job_attempts SET origin='legacy_snapshot' WHERE job_id=?",
+            (job["id"],),
+        )
+        client.post("/api/v1/jobs/" + job["id"] + "/resume", json={})
+        settled(client, job["id"])
+        assert (
+            client.get("/api/v1/jobs/" + job["id"] + "/attempts?after=1").json()[
+                "history_complete"
+            ]
+            is False
+        )
+
+
+def test_forget_rejects_active_probe_and_preserves_saved_profile(tmp_path):
+    app = make_app(tmp_path, run_queue=False)
+    profile = tmp_path / "browser_data/cdp_dy_user_data_dir"
+    profile.mkdir(parents=True)
+    (profile / "Preferences").write_text("saved profile fixture")
+    with TestClient(app) as client:
+        client.get("/api/v1/session")
+        operation = client.post(
+            "/api/v1/platforms/dy/probes", json={"capability": "search"}
+        ).json()
+        assert operation["state"] == "accepted"
+        assert (
+            client.post("/api/v1/platforms/dy/session/forget", json={}).status_code
+            == 409
+        )
+        assert (profile / "Preferences").read_text() == "saved profile fixture"
+
+
+def test_gathered_detail_records_keep_per_scope_counts(tmp_path):
+    worker = """
+import asyncio,os,sys
+os.environ['MEDIAWORKBENCH_JOB_ID']=sys.argv[1]
+from workbench.platform_observation import observed
+from workbench.queue import collect_record
+@observed('dy','detail')
+async def get(aweme_id):return {'aweme_id':aweme_id,'desc':'fixture'}
+async def main():
+ for item in await asyncio.gather(get('v1')):collect_record(item,'contents','dy')
+asyncio.run(main())
+"""
+    with host(tmp_path, worker) as client:
+        job = client.post(
+            "/api/v1/jobs",
+            json={"platform": "dy", "crawler_type": "detail", "specified_ids": "v1"},
+        ).json()
+        settled(client, job["id"])
+        scope = next(
+            s
+            for s in client.get("/api/v1/jobs/" + job["id"] + "/scopes").json()["items"]
+            if s["capability"] == "detail" and s["scope"] == "v1"
+        )
+        assert scope["counts"]["inserted"] == 1
+
+
+def test_probe_result_retries_storage_commit_without_repeating_network(tmp_path):
+    marker = tmp_path / "probe-count"
+    code = f"import pathlib,time,json,sys;p=pathlib.Path({str(marker)!r});p.write_text(p.read_text()+'1' if p.exists() else '1');time.sleep(.2);pathlib.Path(sys.argv[1]).write_text(json.dumps({{'verdict':'available','reason':'control_success','attempted':True,'requests':1}}))"
+    command = lambda identity, result: [sys.executable, "-c", code, str(result)]
+    with host(tmp_path, "", probe_command=command) as client:
+        db = client.app.state.db
+        db.execute("CREATE TABLE transient_write_fault(enabled INTEGER)")
+        db.execute("INSERT INTO transient_write_fault VALUES(1)")
+        db.execute(
+            "CREATE TRIGGER fail_probe_commit BEFORE UPDATE OF state ON operations WHEN NEW.state='completed' AND EXISTS(SELECT 1 FROM transient_write_fault WHERE enabled=1) BEGIN SELECT RAISE(ABORT,'temporary storage unavailable'); END"
+        )
+        op = client.post(
+            "/api/v1/platforms/dy/probes", json={"capability": "search"}
+        ).json()
+        deadline = time.monotonic() + 5
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        time.sleep(0.6)
+        db.execute("UPDATE transient_write_fault SET enabled=0")
+        while time.monotonic() < deadline:
+            result = client.get("/api/v1/operations/" + op["id"]).json()
+            if result["state"] == "completed":
+                break
+            time.sleep(0.02)
+        assert result["state"] == "completed"
+        assert marker.read_text() == "1"
+        job = client.post(
+            "/api/v1/jobs", json={"platform": "xhs", "keywords": "fixture"}
+        ).json()
+        assert settled(client, job["id"])["state"] == "completed"
+
+
 def test_stopped_worker_cannot_commit_late_records(tmp_path):
     ready, release = tmp_path / "ready", tmp_path / "release"
     worker = f"""

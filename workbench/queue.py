@@ -305,11 +305,24 @@ class Queue:
                 from .probe_runner import run_probe
                 try:
                     result = run_probe(self.db,operation,self.stop_event,self.sessions,self.probe_command)
-                    self.availability.complete(operation,result)
                 except Exception:
+                    result={'attempted':False,'verdict':'unconfirmed','reason':'worker_failed','cleanup_complete':False}
+                # Retain the finished result and retry only its transaction. A
+                # temporary storage fault must not repeat platform requests or
+                # leave an unclaimable running operation until host restart.
+                while not self.stop_event.is_set():
+                    try:
+                        self.availability.complete(operation,result)
+                        break
+                    except Exception:
+                        try:
+                            self.db.execute("UPDATE operations SET updated=?,result=? WHERE id=? AND state='running'",(now(),dump({'reason_code':'storage_error','next_actions':['wait','retry_later'],'commit_pending':True}),operation['id']))
+                        except Exception:
+                            pass
+                        self.stop_event.wait(.5)
+                if self.stop_event.is_set():
                     import logging
-                    logging.getLogger(__name__).error('Probe result could not be committed; restart recovery retains its operation')
-                    self.stop_event.wait(1)
+                    logging.getLogger(__name__).error('Probe result commit interrupted; restart recovery retains its operation')
                 continue
             try:
                 job = self._claim()
@@ -600,8 +613,15 @@ def collect_record(item, kind, platform, source_id=None, source_url=""):
         recovery.discover_followups(con,job,int(attempt),item,kind)
         from .platform_observation import current_scope
         active_scope=current_scope.get()
-        if active_scope:
-            capability,scope=active_scope
+        attributed=set([active_scope] if active_scope else [])
+        # Gathered requests run in child contexts. Match their stable source ID
+        # at commit time so the parent's ContextVar cannot erase detail counts.
+        content_id=next((str(item[k]) for k in ('aweme_id','note_id','video_id','bvid','content_id') if item.get(k)),None)
+        if content_id:
+            capability='comments' if 'comment' in kind else 'detail'
+            if con.execute('SELECT 1 FROM collection_scopes WHERE job_id=? AND attempt=? AND capability=? AND scope=?',(job_id,int(attempt),capability,content_id)).fetchone():
+                attributed.add((capability,content_id))
+        for capability,scope in attributed:
             con.execute('INSERT INTO scope_records VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING',(job_id,int(attempt),capability,scope,record_id))
             con.execute('INSERT INTO scope_metrics VALUES(?,?,?,?,1,?,?,?) ON CONFLICT(job_id,attempt,capability,scope) DO UPDATE SET received=received+1,inserted=inserted+excluded.inserted,updated=updated+excluded.updated,unchanged=unchanged+excluded.unchanged',
                         (job_id,int(attempt),capability,scope,saved['inserted'],saved['updated'],saved['unchanged']))

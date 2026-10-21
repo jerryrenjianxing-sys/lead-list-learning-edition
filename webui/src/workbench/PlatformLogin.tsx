@@ -210,7 +210,7 @@ export default function PlatformLogin({
                     {p.session_status === "failed" ? "重试保存" : "检查登录"}
                   </button>
                   <button
-                    disabled={working}
+                    disabled={working || operation && ["accepted","running","cancelling"].includes(operation.state)}
                     onClick={() => setForgetting(p.id)}
                   >
                     忘记此账号

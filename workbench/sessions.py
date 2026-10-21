@@ -187,7 +187,11 @@ class SessionManager:
             raise
 
     async def _release_probe(self, lease):
-        self._validate(lease,ending=True)
+        # Cleanup proves ownership with the opaque lease, not mutable account
+        # generation. A stale generation may not write data but must release its
+        # own pages; a different lease must never close another operation's pages.
+        if not self.lease or not self.lease.get('operation_id') or not secrets.compare_digest(self.lease['lease'],lease):
+            raise Conflict('Probe lease no longer owns this browser')
         try:
             async def close_pages():
                 for page in list(self.context.pages):
@@ -534,6 +538,8 @@ class SessionManager:
                 (platform,),
             ).fetchone():
                 raise Conflict("该平台仍有任务，请先停止任务再忘记账号。")
+            if (self.platform==platform and self.lease) or con.execute("SELECT 1 FROM operations WHERE platform=? AND state IN ('accepted','running','cancelling') LIMIT 1",(platform,)).fetchone():
+                raise Conflict('该平台仍有操作或探测，请先取消并等待结束后再忘记账号。')
             if self.platform == platform:
                 self.verified = False
                 await self._close_browser()

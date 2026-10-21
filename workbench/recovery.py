@@ -344,7 +344,10 @@ class Recovery:
                 for r in rows[:limit]
             ],
             "next_after": rows[limit - 1]["attempt"] if len(rows) > limit else None,
-            "history_complete": all(r["origin"] == "live" for r in rows),
+            "history_complete": not self.db.query(
+                "SELECT 1 FROM job_attempts WHERE job_id=? AND origin<>'live' LIMIT 1",
+                (job_id,),
+            ),
         }
 
     def operation(self, identity) -> OperationResult:
