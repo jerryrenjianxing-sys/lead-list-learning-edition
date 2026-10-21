@@ -51,6 +51,7 @@ class OperationResult(TypedDict, total=False):
     requests: int
     elapsed_ms: int
     cleanup_complete: bool
+    commit_pending: bool
 
 
 def event(

@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import base64
 import ctypes
+from contextlib import closing
 from ctypes import wintypes
 import hashlib
 import json
@@ -148,11 +149,11 @@ class ShellRegistration:
         assert current == self.registry, "Original installation registration was not restored"
 
 
-def run_command(arguments, env, *, timeout=360):
+def run_command(arguments, env, *, timeout=360, cwd=None):
     startup = subprocess.STARTUPINFO()
     startup.dwFlags = subprocess.STARTF_USESHOWWINDOW
     startup.wShowWindow = 0
-    return subprocess.run([str(argument) for argument in arguments], env=env, startupinfo=startup, check=True, timeout=timeout, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    return subprocess.run([str(argument) for argument in arguments], env=env, cwd=cwd, startupinfo=startup, check=True, timeout=timeout, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
 def app_version(app):
@@ -222,7 +223,7 @@ def stop_host_or_desktop(app, env, instance, process, log, info, *, desktop=Fals
 
 
 def snapshot(data):
-    with sqlite3.connect(data / "workbench.sqlite3") as connection:
+    with closing(sqlite3.connect(data / "workbench.sqlite3")) as connection:
         assert connection.execute("PRAGMA quick_check").fetchone()[0] == "ok"
         tables = [row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
         rows = {}
@@ -249,12 +250,12 @@ def preserved(data,before):
     added=set(current['rows'])-set(before['rows'])
     assert added<=RECOVERY_TABLES,'Migration created an unrecognized business table'
     if added:
-        with sqlite3.connect(data/'workbench.sqlite3') as con:
+        with closing(sqlite3.connect(data/'workbench.sqlite3')) as con:
             assert con.execute('PRAGMA user_version').fetchone()[0]==5
         backups=list((data/'backups').glob('*.sqlite3'))
         backed_up=False
         for path in backups:
-            with sqlite3.connect(path) as con:
+            with closing(sqlite3.connect(path)) as con:
                 backed_up |= con.execute('PRAGMA user_version').fetchone()[0]==4
         assert backed_up,'Schema 4 was not backed up'
     return current
@@ -306,7 +307,10 @@ def seed(app, env, data, instance, baseline_version="0.2.0"):
         run_command([app / "runtime/python/python.exe", ROOT / "tests/client_smoke.py", "--instance", instance, "--output", data.parent / "fixture-exports"], env, timeout=120)
     finally:
         stop_host_or_desktop(app, env, instance, process, log, info)
-    run_command([app / "runtime/python/python.exe", "-c", SEED, data, app], {**env, "PYTHONPATH": str(app)})
+    run_command([app / "runtime/python/python.exe", "-c", SEED, data, app], {**env, "PYTHONPATH": str(app)},cwd=app)
+    if baseline_version in ('0.4.3','0.4.4'):
+        with closing(sqlite3.connect(data/'workbench.sqlite3')) as con:
+            assert con.execute('PRAGMA user_version').fetchone()[0]==4,'Old installer fixture must remain schema 4 before upgrade'
     return snapshot(data)
 
 
@@ -320,7 +324,7 @@ def verify_new(app, env, data, instance, before, version):
     try:
         assert request(info, "GET", "/api/v1/health")["version"] == version
         assert request(info, "GET", "/api/v1/datasets")["items"]
-        run_command([app / "runtime/python/python.exe", "-c", VERIFY_SNAPSHOT, data], {**env, "PYTHONPATH": str(app)})
+        run_command([app / "runtime/python/python.exe", "-c", VERIFY_SNAPSHOT, data], {**env, "PYTHONPATH": str(app)},cwd=app)
     finally:
         stop_host_or_desktop(app, env, instance, process, log, info, desktop=True)
     preserved(data,before)
@@ -417,11 +421,11 @@ def execute(args):
                     assert app_version(app)=='0.4.3'
                     rejected=run_command([app/'runtime/python/python.exe','-c',
                         'from pathlib import Path;from workbench.database import Database;import sys;\ntry:Database(Path(sys.argv[1]))\nexcept RuntimeError as e:assert "newer" in str(e).lower();print("schema5-rejected")\nelse:raise SystemExit(2)',sealed],
-                        {**env,'PYTHONPATH':str(app)})
+                        {**env,'PYTHONPATH':str(app)},cwd=app)
                     process,log,info=launch_host_or_desktop(app,env,data,instance)
                     try:
                         assert request(info,'GET','/api/v1/health')['version']=='0.4.3'
-                        run_command([app/'runtime/python/python.exe','-c',VERIFY_SNAPSHOT,data],{**env,'PYTHONPATH':str(app)})
+                        run_command([app/'runtime/python/python.exe','-c',VERIFY_SNAPSHOT,data],{**env,'PYTHONPATH':str(app)},cwd=app)
                     finally:
                         stop_host_or_desktop(app,env,instance,process,log,info)
                     assert snapshot(data)==before
