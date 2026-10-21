@@ -188,7 +188,7 @@ class ZhiHuClient(AbstractApiClient, ProxyRefreshMixin):
         params = {"include": "email,is_active,is_bind_phone"}
         return await self.get("/api/v4/me", params)
 
-    @observed('zhihu','search')
+    @observed('zhihu','search',parsed=True)
     async def get_note_by_keyword(
         self,
         keyword: str,
@@ -228,6 +228,8 @@ class ZhiHuClient(AbstractApiClient, ProxyRefreshMixin):
             "vertical": note_type.value,
         }
         search_res = await self.get(uri, params)
+        from workbench.platform_observation import record_response
+        record_response('zhihu','search',keyword,search_res)
         utils.logger.info(f"[ZhiHuClient.get_note_by_keyword] Search result: {search_res}")
         return self._extractor.extract_contents_from_search(search_res)
 
@@ -596,6 +598,7 @@ class ZhiHuClient(AbstractApiClient, ProxyRefreshMixin):
             await asyncio.sleep(crawl_interval)
         return all_contents
 
+    @observed('zhihu','detail')
     async def get_answer_info(
         self,
         question_id: str,
@@ -614,6 +617,7 @@ class ZhiHuClient(AbstractApiClient, ProxyRefreshMixin):
         response_html = await self.get(uri, return_response=True)
         return self._extractor.extract_answer_content_from_html(response_html)
 
+    @observed('zhihu','detail')
     async def get_article_info(self, article_id: str) -> Optional[ZhihuContent]:
         """
         Get article information

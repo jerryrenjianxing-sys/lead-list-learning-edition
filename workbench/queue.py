@@ -130,6 +130,7 @@ def control(con, job_id, action):
         if blocked and row['platform']=='dy':
             raise Conflict('对应平台能力尚未恢复，请查看状态并等待复查；重新登录不会清除冷却。')
         con.execute('UPDATE access_waits SET enabled=0 WHERE job_id=?',(job_id,))
+        con.execute('DELETE FROM access_replays WHERE job_id=?',(job_id,))
         options = json.loads(row["options"])
         options.pop("enable_media", None)
         con.execute("UPDATE jobs SET options=? WHERE id=?", (dump(options), job_id))
@@ -183,7 +184,7 @@ def clear_history(con, ids=None, *, restore=False):
     return {"count": len(selected), "ids": selected, "data_preserved": True}
 
 
-def kill_tree(pid, created=None):
+def kill_tree(pid, created=None, timeout=3):
     try:
         process = psutil.Process(pid)
         if created is not None and abs(process.create_time() - created) > 0.1:
@@ -195,7 +196,7 @@ def kill_tree(pid, created=None):
             except psutil.Error:
                 pass
         process.terminate()
-        _, alive = psutil.wait_procs(children + [process], timeout=3)
+        _, alive = psutil.wait_procs(children + [process], timeout=timeout)
         for child in alive:
             try:
                 child.kill()
@@ -257,6 +258,8 @@ class Queue:
             con.execute("BEGIN IMMEDIATE")
             if not self.db.accept_writes:
                 return None
+            if con.execute("SELECT 1 FROM operations WHERE kind='probe' AND state IN ('running','cancelling') LIMIT 1").fetchone():
+                return None
             row = con.execute(
                 "SELECT * FROM jobs WHERE state='queued' ORDER BY (json_extract(options,'$.crawler_type')='login') DESC,created,id LIMIT 1"
             ).fetchone()
@@ -290,14 +293,29 @@ class Queue:
 
     def _loop(self):
         while not self.stop_event.is_set():
-            self.availability.schedule_due()
-            operation = self.availability.claim()
+            try:
+                self.availability.schedule_due()
+                operation = self.availability.claim()
+            except Exception:
+                import logging
+                logging.getLogger(__name__).error('Scheduler storage unavailable; will retry')
+                self.stop_event.wait(1)
+                continue
             if operation:
                 from .probe_runner import run_probe
-                result = run_probe(self.db,operation,self.stop_event,self.sessions,self.probe_command)
-                self.availability.complete(operation,result)
+                try:
+                    result = run_probe(self.db,operation,self.stop_event,self.sessions,self.probe_command)
+                    self.availability.complete(operation,result)
+                except Exception:
+                    import logging
+                    logging.getLogger(__name__).error('Probe result could not be committed; restart recovery retains its operation')
+                    self.stop_event.wait(1)
                 continue
-            job = self._claim()
+            try:
+                job = self._claim()
+            except Exception:
+                self.stop_event.wait(1)
+                continue
             if not job:
                 if self.sessions and self.sessions.thread:
                     try:
@@ -403,7 +421,7 @@ class Queue:
                     log.flush()
                     level = (
                         "error"
-                        if re.search(r"\bERROR\b|Traceback \(most recent", line)
+                        if re.search(r"\bERROR\b|Traceback \(most recent|^[\w.]+(?:Error|Exception|Conflict):", line)
                         else "info"
                     )
                     if level == "error":
@@ -413,7 +431,8 @@ class Queue:
                             unconfirmed.append("搜索返回空列表，尚未确认结果；可查看详情后重试。")
                         elif "Repeated page for keyword:" in line:
                             unconfirmed.append("搜索分页重复，已停止翻页以避免循环；采集尚未确认完整。")
-                    self.db.event(job["id"], line, level, attempt=job['attempt'])
+                    source='local_app' if 'InternalAuthorizationError:' in line else 'storage' if re.search(r'\bsqlite3\.(?:Operational|Integrity|Database)Error|\bPermissionError:',line) else 'browser' if 'TargetClosedError' in line else 'worker'
+                    self.db.event(job["id"], line, level, attempt=job['attempt'],source=source)
 
             reader = threading.Thread(target=read_output, daemon=True)
             reader.start()
@@ -497,7 +516,7 @@ class Queue:
 
                     if job["options"]["crawler_type"] != "login":
                         SessionStore(self.db).pause(
-                            job["id"], job["platform"], progress[0]["reason"]
+                            job["id"], job["platform"], progress[0]["reason"],attempt=job['attempt']
                         )
                 elif progress[0]["reason"] in ("network_error", "unconfirmed"):
                     state = "interrupted"
@@ -538,20 +557,12 @@ class Queue:
             con.commit()
 
 
-_collector_databases = {}
-
-
 def collect_record(item, kind, platform, source_id=None, source_url=""):
     job_id = os.environ.get("MEDIAWORKBENCH_JOB_ID")
     if not job_id:
         return
-    from .database import Database
-    from .paths import data_root
-
-    root = data_root()
-    if str(root) not in _collector_databases:
-        _collector_databases[str(root)] = Database(root)
-    db = _collector_databases[str(root)]
+    from .database import worker_database
+    db = worker_database()
     with db.lock, db.connect() as con:
         con.execute("BEGIN IMMEDIATE")
         job = con.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
@@ -586,6 +597,7 @@ def collect_record(item, kind, platform, source_id=None, source_url=""):
         recovery.event(con,job_id,int(attempt),'Record committed',source='storage',kind='record_committed',
                        capability='comments' if 'comment' in kind else 'detail',details=saved)
         record_id = saved['record_ids'][0]
+        recovery.discover_followups(con,job,int(attempt),item,kind)
         from .platform_observation import current_scope
         active_scope=current_scope.get()
         if active_scope:

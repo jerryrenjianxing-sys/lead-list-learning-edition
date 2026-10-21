@@ -14,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 def upgrade_baseline(version):
     """Pin deployed upgrade fixtures without invalidating historical evidence."""
     parts = tuple(map(int, version.split('.')))
+    if parts >= (0,5,0):
+        return '0.4.3'
     if parts >= (0, 4, 2):
         return "0.4.1"
     return "0.3.1" if parts >= (0, 4, 0) else "0.2.0"
@@ -45,15 +47,24 @@ def verify_desktop_manifest(manifest):
         raise RuntimeError("Obsolete desktop dependencies were included in the Electron release")
 
 
-def public_upgrade_summary(result, version):
+def public_upgrade_summary(result, version, baseline=None):
     prefix, patch = version.rsplit(".", 1)
     expected_next = prefix + "." + str(int(patch) + 1)
-    expected_baseline = upgrade_baseline(version)
+    expected_baseline = baseline or upgrade_baseline(version)
     if result.get("ok") is not True or result.get("version") != version or result.get("baseline_version") != expected_baseline or result.get("next_version") != expected_next or result.get("cleanup_complete") is not True:
         raise RuntimeError("Upgrade checks did not verify the current and private next version with cleanup")
     # Directory, install paths, fixture files, process details and raw errors
     # remain in the local cache; public evidence includes only test outcomes.
     return {key: result[key] for key in ("ok", "version", "baseline_version", "next_version", "cleanup_complete", "checks", "limitations")}
+
+
+def public_upgrade_matrix(primary,additional,version):
+    required=['0.4.3','0.4.4']
+    proofs={proof.get('baseline_version'):proof for proof in [primary,*additional]}
+    if set(proofs)!=set(required) or primary.get('baseline_version')!='0.4.3' or primary.get('rollback_verified') is not True:
+        raise RuntimeError('Upgrade checks require 0.4.3, 0.4.4 and the rehearsed 0.4.3 rollback')
+    public=[public_upgrade_summary(proofs[baseline],version,baseline) for baseline in required]
+    return {**public[0],'baseline_versions':required,'upgrade_paths':public,'rollback_verified':True}
 
 
 def public_native_update_summary(result, version):
@@ -70,11 +81,14 @@ def main():
     parser.add_argument("--release-directory")
     parser.add_argument("--include-evidence", action="store_true")
     parser.add_argument("--upgrade-result", type=Path)
+    parser.add_argument('--additional-upgrade-result',type=Path,action='append',default=[])
     parser.add_argument("--native-update-result", type=Path)
     args = parser.parse_args()
     release = Path(args.release_directory) if args.release_directory else ROOT / "release" / args.version
     if args.upgrade_result:
-        result = public_upgrade_summary(json.loads(args.upgrade_result.read_text(encoding="utf-8")), args.version)
+        raw=json.loads(args.upgrade_result.read_text(encoding='utf-8'))
+        result=(public_upgrade_matrix(raw,[json.loads(p.read_text(encoding='utf-8')) for p in args.additional_upgrade_result],args.version)
+                if tuple(map(int,args.version.split('.'))) >= (0,5,0) else public_upgrade_summary(raw,args.version))
         (release / "ELECTRON_UPGRADE_RESULT.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
     if args.native_update_result:
         result = public_native_update_summary(json.loads(args.native_update_result.read_text(encoding="utf-8")), args.version)
@@ -153,6 +167,8 @@ def main():
     for source in (ROOT / "LICENSE", ROOT / "THIRD_PARTY_NOTICES.md", ROOT / "docs/RELEASE_NOTES.md"):
         shutil.copy2(source, release / source.name)
     shutil.copy2(ROOT / "docs/RECOVERY.md", release / "RECOVERY.md")
+    if tuple(map(int,args.version.split('.'))) >= (0,5,0):
+        shutil.copy2(ROOT/'docs/ROLLBACK_0.4.3.md',release/'ROLLBACK_0.4.3.md')
     shutil.copy2(ROOT / "docs/LOGIN_SESSIONS.md", release / "LOGIN_SESSIONS.md")
     shutil.copy2(ROOT / "docs/ELECTRON_MIGRATION.md", release / "ELECTRON_MIGRATION.md")
     if args.include_evidence:

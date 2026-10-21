@@ -76,6 +76,9 @@ def create_draft(tag, version):
 def verify_release_checks(version, integrity, check, desktop_check, lifecycle_check, upgrade_check, native_update_check):
     prefix, patch = version.rsplit(".", 1)
     next_version = prefix + "." + str(int(patch) + 1)
+    if tuple(map(int,version.split('.'))) >= (0,5,0):
+        if upgrade_check.get('baseline_versions')!=['0.4.3','0.4.4'] or upgrade_check.get('rollback_verified') is not True:
+            raise RuntimeError('State/recovery release requires both upgrade paths and the 0.4.3 rollback rehearsal')
     if integrity.get("version") != version or integrity["packaged_manifest_dirty"] or check["local_state"] != "passed" or not check["cleanup_complete"] or desktop_check.get("ok") is not True or desktop_check.get("version") != version or desktop_check.get("cleanup_complete") is not True or lifecycle_check.get("ok") is not True or lifecycle_check.get("version") != version or integrity.get("desktop", {}).get("kind") != "electron" or upgrade_check.get("ok") is not True or upgrade_check.get("version") != version or upgrade_check.get("baseline_version") != upgrade_baseline(version) or upgrade_check.get("next_version") != next_version or upgrade_check.get("cleanup_complete") is not True or native_update_check.get("ok") is not True or native_update_check.get("version") != version or native_update_check.get("next_version") != next_version or native_update_check.get("cleanup_complete") is not True or native_update_check.get("implementation_override") is not False:
         raise RuntimeError("Release did not pass deterministic validation")
 
@@ -111,6 +114,7 @@ def main():
     files = sorted(p for p in directory.iterdir() if p.is_file())
     names = {p.name for p in files}
     required = {"releases.win-preview.json", full_package(directory, version).name, "MediaWorkbench-Skill.zip", "SHA256SUMS.txt", "LICENSE", "THIRD_PARTY_NOTICES.md", "ELECTRON_TEST_RESULT.json", "ELECTRON_LIFECYCLE_RESULT.json", "ELECTRON_UPGRADE_RESULT.json", "ELECTRON_NATIVE_UPDATE_RESULT.json", "SKILL_FILE_RESULT.json"}
+    if tuple(map(int,version.split('.'))) >= (0,5,0):required.add('ROLLBACK_0.4.3.md')
     if not required <= names or not any(n.endswith("Setup.exe") for n in names):
         raise ValueError("Missing release assets")
     hashes = {}

@@ -25,6 +25,32 @@ class StatusDetail(TypedDict):
     evidence_refs: list[int]
     next_actions: list[dict[str, str | bool]]
     decision_revision: str
+    scope_counts: dict[str, int]
+    range_verified: bool
+    explanation: str
+    failure_domain: str
+    access: list[dict]
+    operation_refs: list[str]
+
+
+class OperationResult(TypedDict, total=False):
+    id: str
+    kind: str
+    platform: str
+    capability: str
+    state: str
+    job_id: str | None
+    attempt: int
+    created: str
+    updated: str
+    revision: str
+    reason_code: str
+    next_actions: list[str]
+    attempted: bool
+    verdict: str
+    requests: int
+    elapsed_ms: int
+    cleanup_complete: bool
 
 
 def event(
@@ -165,6 +191,9 @@ def plan_scopes(con, job, attempt):
     for scope in filter(
         None, (v.strip() for v in re.split(r"[,，\r\n]+", options.get(field, "")))
     ):
+        from .targets import canonical
+
+        scope = canonical(job["platform"], capability, scope)
         con.execute(
             "INSERT OR IGNORE INTO collection_scopes VALUES(?,?,?,?,?,'not_executed','not_started',?,?,NULL)",
             (job["id"], attempt, capability, scope, "expected", now(), now()),
@@ -247,14 +276,59 @@ def scope_fact(con, job_id, attempt, stage, scope, reason, details):
     return reason
 
 
+def discover_followups(con, job, attempt, item, kind):
+    options = json.loads(job["options"])
+    content_id = next(
+        (
+            str(item[key])
+            for key in ("aweme_id", "note_id", "video_id", "bvid", "content_id")
+            if item.get(key)
+        ),
+        None,
+    )
+    capability = scope = None
+    if options.get("enable_comments") and "comment" not in kind and content_id:
+        capability, scope = "comments", content_id
+    elif options.get("enable_sub_comments") and "comment" in kind and content_id:
+        child_count = next(
+            (
+                item.get(key)
+                for key in (
+                    "reply_comment_total",
+                    "sub_comment_count",
+                    "rcount",
+                    "total_number",
+                )
+                if isinstance(item.get(key), int)
+            ),
+            0,
+        )
+        parent = next(
+            (
+                str(item[key])
+                for key in ("comment_id", "cid", "rpid", "id")
+                if item.get(key)
+            ),
+            None,
+        )
+        if child_count > 0 and parent:
+            capability, scope = "replies", content_id + ":" + parent
+    if scope:
+        con.execute(
+            "INSERT OR IGNORE INTO collection_scopes VALUES(?,?,?,?,?,'not_executed','not_started',?,?,NULL)",
+            (job["id"], attempt, capability, scope, "discovered", now(), now()),
+        )
+
+
 class Recovery:
     def __init__(self, db):
         self.db = db
 
-    def attempts(self, job_id):
+    def attempts(self, job_id, after=0, limit=200):
         self.db.one("jobs", job_id)
         rows = self.db.query(
-            "SELECT * FROM job_attempts WHERE job_id=? ORDER BY attempt", (job_id,)
+            "SELECT * FROM job_attempts WHERE job_id=? AND attempt>? ORDER BY attempt LIMIT ?",
+            (job_id, after, limit + 1),
         )
         return {
             "items": [
@@ -267,27 +341,46 @@ class Recovery:
                         json.loads(r["checkpoint"]).get("saved_records", 0),
                     ),
                 }
-                for r in rows
+                for r in rows[:limit]
             ],
+            "next_after": rows[limit - 1]["attempt"] if len(rows) > limit else None,
             "history_complete": all(r["origin"] == "live" for r in rows),
         }
 
-    def operation(self, identity):
+    def operation(self, identity) -> OperationResult:
         row = self.db.one("operations", identity)
         result = json.loads(row.pop("result"))
-        return {'reason_code':'','next_actions':['wait'] if row['state'] in ('accepted','running','cancelling') else [],**row, **result, "revision": row["updated"]}
+        return {
+            "reason_code": "",
+            "next_actions": ["wait"]
+            if row["state"] in ("accepted", "running", "cancelling")
+            else [],
+            **row,
+            **result,
+            "revision": row["updated"],
+        }
 
     @staticmethod
-    def cancel_session_operation(con,identity):
+    def cancel_session_operation(con, identity):
         from .queue import control
-        operation=con.execute('SELECT * FROM operations WHERE id=?',(identity,)).fetchone()
-        if operation['state'] not in ('accepted','running'):
-            return {'id':identity,'state':operation['state']}
-        job=con.execute('SELECT attempt FROM jobs WHERE id=?',(operation['job_id'],)).fetchone()
-        if job['attempt'] != operation['attempt']:
-            raise ValueError('This operation belongs to an earlier attempt')
-        control(con,operation['job_id'],'stop')
-        return {'id':identity,'state':con.execute('SELECT state FROM operations WHERE id=?',(identity,)).fetchone()[0]}
+
+        operation = con.execute(
+            "SELECT * FROM operations WHERE id=?", (identity,)
+        ).fetchone()
+        if operation["state"] not in ("accepted", "running"):
+            return {"id": identity, "state": operation["state"]}
+        job = con.execute(
+            "SELECT attempt FROM jobs WHERE id=?", (operation["job_id"],)
+        ).fetchone()
+        if job["attempt"] != operation["attempt"]:
+            raise ValueError("This operation belongs to an earlier attempt")
+        control(con, operation["job_id"], "stop")
+        return {
+            "id": identity,
+            "state": con.execute(
+                "SELECT state FROM operations WHERE id=?", (identity,)
+            ).fetchone()[0],
+        }
 
     def scopes(self, job_id, attempt=None, after=0, limit=200):
         self.db.one("jobs", job_id)
@@ -338,7 +431,10 @@ class Recovery:
             "scopes": scopes,
             "attempts": [
                 {k: r[k] for k in ("attempt", "state", "started", "finished", "origin")}
-                for r in self.attempts(job_id)["items"]
+                for r in self.db.query(
+                    "SELECT attempt,state,started,finished,origin FROM job_attempts WHERE job_id=? ORDER BY attempt",
+                    (job_id,),
+                )
             ],
         }
 
@@ -368,6 +464,8 @@ class Recovery:
         reason = (
             issues[0]["reason"] if issues else progress[0]["reason"] if progress else ""
         )
+        if state == "needs_login" and progress and progress[0]["reason"]:
+            reason = progress[0]["reason"]
         if state == "cancelled":
             reason = "user_stopped"
         lifecycle = (
@@ -389,6 +487,21 @@ class Recovery:
             (job["id"], job["attempt"]),
         )
         actions = []
+        access = self.db.query(
+            "SELECT w.capability,s.state,s.reason,s.cooldown_until,s.checks,s.updated,s.operation_id FROM access_waits w LEFT JOIN access_state s ON s.platform=? AND s.account_id=w.account_id AND s.capability=w.capability WHERE w.job_id=? AND w.enabled=1",
+            (job["platform"], job["id"]),
+        )
+        probes = self.db.query(
+            "SELECT o.id,o.state FROM access_checks c JOIN operations o ON o.id=c.operation_id WHERE c.source_job=? AND c.source_attempt=? ORDER BY o.created DESC",
+            (job["id"], job["attempt"]),
+        )
+        blocked = any(
+            item["state"] in ("restricted", "suspected_restriction", "manual_action")
+            for item in access
+        )
+        probing = any(
+            item["state"] in ("accepted", "running", "cancelling") for item in probes
+        )
         if state in ("queued", "running", "needs_login", "waiting_access"):
             actions.append(
                 {
@@ -399,21 +512,83 @@ class Recovery:
                     "enabled": True,
                 }
             )
-        if state in ("failed", "partial", "interrupted", "cancelled"):
+        if (
+            state in ("failed", "partial", "interrupted", "cancelled")
+            or state == "waiting_access"
+            and not blocked
+            and not probing
+        ):
             actions.append({"id": "resume", "label": "恢复原任务", "enabled": True})
         if state == "needs_login":
             actions.append(
                 {"id": "login", "label": "完成平台登录或验证", "enabled": True}
             )
+        from tools.crawl_status import MESSAGES
+
+        explanation = MESSAGES.get(reason, job.get("error") or "")
+        if state == "needs_login":
+            from .auth import MESSAGES as AUTH_MESSAGES
+
+            explanation = AUTH_MESSAGES.get(reason, explanation)
+        if state == "waiting_access" and blocked:
+            reason = next(
+                item["state"]
+                for item in access
+                if item["state"]
+                in ("restricted", "suspected_restriction", "manual_action")
+            )
+            explanation = {
+                "restricted": "平台明确要求暂缓访问，正在按保存的时间等待复查。",
+                "suspected_restriction": "原请求与对照均异常，暂记疑似访问限制；尚不能确认账号风控。",
+                "manual_action": "三次自动复查未恢复，请查看操作证据并手动处理。",
+            }[reason]
+        elif state == "waiting_access" and (job.get("error") or "").startswith(
+            "对照读取成功"
+        ):
+            explanation = job["error"]
+        elif state == "cancelled":
+            explanation = "用户已停止，登录或定时复查都不会自动启动此任务。"
+        failure_domain = (
+            "platform"
+            if issues
+            else "browser"
+            if reason in ("startup_failed", "startup_timeout", "browser_closed")
+            else "session"
+            if progress and progress[0]["reason"]
+            else "queue"
+        )
+        range_result = (
+            "not_applicable"
+            if job["options"].get("crawler_type") == "login"
+            else "user_stopped"
+            if state == "cancelled"
+            else "not_executed"
+            if scopes and all(r["outcome"] == "not_executed" for r in scopes)
+            else "abnormal_stop"
+            if any(r["outcome"] in ("abnormal_stop", "not_executed") for r in scopes)
+            else "in_progress"
+            if any(r["outcome"] == "running" for r in scopes)
+            else "no_results"
+            if collection.get("empty")
+            else "quantity_reached"
+            if any(r["outcome"] == "quantity_reached" for r in scopes)
+            else "normal_end"
+            if scopes
+            else "unconfirmed"
+        )
         return {
             "lifecycle": lifecycle,
             "wait_reason": reason if lifecycle == "waiting" else "",
-            "result": "no_results" if collection.get("empty") else state,
+            "result": range_result,
             "reason_code": reason,
             "counts": self.counts(job["id"], job["attempt"], total),
             "evidence_refs": [r["seq"] for r in evidence],
             "next_actions": actions,
-            "decision_revision": f"{job['attempt']}:{job['updated']}",
+            "decision_revision": f"{job['attempt']}:{job['updated']}:{evidence[0]['seq'] if evidence else 0}:{max((a['updated'] or '' for a in access), default='')}",
+            "explanation": explanation,
+            "failure_domain": failure_domain,
+            "access": access,
+            "operation_refs": [p["id"] for p in probes],
             "scope_counts": {r["outcome"]: r["n"] for r in scopes},
             "range_verified": bool(scopes)
             and all(

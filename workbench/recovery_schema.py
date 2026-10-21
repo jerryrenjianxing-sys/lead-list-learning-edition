@@ -65,4 +65,7 @@ CREATE TABLE IF NOT EXISTS execution_sessions(
  job_id TEXT NOT NULL REFERENCES jobs(id), attempt INTEGER NOT NULL,
  generation INTEGER NOT NULL, account_id TEXT, lease_hash TEXT NOT NULL,
  PRIMARY KEY(job_id,attempt));
+CREATE TABLE IF NOT EXISTS access_replays(
+ job_id TEXT NOT NULL REFERENCES jobs(id), capability TEXT NOT NULL, generation INTEGER NOT NULL,
+ operation_id TEXT, created TEXT NOT NULL, PRIMARY KEY(job_id,capability,generation));
 """

@@ -186,6 +186,7 @@ def main():
         "VALIDATION.md",
         "UPGRADE_STATUS.md",
         "RECOVERY.md",
+        "ROLLBACK_0.4.3.md",
         "LOGIN_SESSIONS.md",
         "PUBLIC_PREVIEW.md",
         "RELEASE_NOTES.md",

@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import json
 import time
+import re
 from typing import Literal, TypedDict
 
-from .database import Conflict, digest, dump, now, uid
+from .database import digest, dump, now, uid
 
 CAPABILITIES = ("search", "detail", "creator", "comments", "replies", "profile")
 NETWORK_REASONS = {"network_error", "request_failed", "timeout"}
@@ -87,8 +88,8 @@ class Availability:
             | {"platform": platform, "capability": capability}
         )
         existing = con.execute(
-            "SELECT o.id,o.state FROM access_checks c JOIN operations o ON o.id=c.operation_id WHERE c.environment=? AND o.state IN ('accepted','running')",
-            (environment,),
+            "SELECT o.id,o.state FROM access_checks c JOIN operations o ON o.id=c.operation_id WHERE o.platform=? AND o.capability=? AND c.generation=? AND c.account_id IS ? AND o.state IN ('accepted','running','cancelling')",
+            (platform, capability, session["generation"], session["account_id"]),
         ).fetchone()
         if existing:
             return {**dict(existing), "reused": True}
@@ -165,7 +166,7 @@ class Availability:
         with self.db.lock, self.db.connect() as con:
             con.execute("BEGIN IMMEDIATE")
             con.execute(
-                "UPDATE operations SET state='failed',updated=?,result=? WHERE kind='probe' AND state='running'",
+                "UPDATE operations SET state='failed',updated=?,result=? WHERE kind='probe' AND state IN ('running','cancelling')",
                 (
                     now(),
                     dump(
@@ -184,6 +185,10 @@ class Availability:
     def claim(self):
         with self.db.lock, self.db.connect() as con:
             con.execute("BEGIN IMMEDIATE")
+            if con.execute(
+                "SELECT 1 FROM operations WHERE kind='probe' AND state IN ('running','cancelling') LIMIT 1"
+            ).fetchone():
+                return None
             if (
                 not self.db.accept_writes
                 or con.execute(
@@ -281,6 +286,12 @@ class Availability:
                 if same_session
                 else "session_changed"
             )
+            if not isinstance(reason, str) or not re.fullmatch(
+                "[a-z][a-z0-9_]{0,63}", reason
+            ):
+                reason = "outcome_unconfirmed"
+            if result.get("cleanup_complete") is False:
+                verdict, reason = "unconfirmed", "cleanup_failed"
             # Whitelist process output; no body, exception, local path or account is returned.
             clean = {
                 k: result[k]
@@ -295,8 +306,24 @@ class Availability:
                 else ["inspect_status", "retry_later"],
             )
             con.execute(
-                "UPDATE operations SET state='completed',updated=?,result=? WHERE id=?",
-                (now(), dump(clean), operation["id"]),
+                "UPDATE operations SET state=?,updated=?,result=? WHERE id=?",
+                (
+                    "failed"
+                    if reason
+                    in (
+                        "startup_failed",
+                        "startup_timeout",
+                        "worker_failed",
+                        "storage_error",
+                        "cleanup_failed",
+                        "host_interrupted",
+                        "session_changed",
+                    )
+                    else "completed",
+                    now(),
+                    dump(clean),
+                    operation["id"],
+                ),
             )
             if same_session and operation["platform"] == "dy":
                 self._decision(
@@ -365,7 +392,16 @@ class Availability:
             ),
         )
         if state == "available":
-            self._resume(con, platform, account)
+            if previous and previous["state"] in (
+                "restricted",
+                "suspected_restriction",
+                "manual_action",
+            ):
+                con.execute(
+                    "DELETE FROM access_replays WHERE capability=? AND job_id IN (SELECT w.job_id FROM access_waits w JOIN jobs j ON j.id=w.job_id WHERE j.platform=? AND w.account_id=? AND w.enabled=1)",
+                    (capability, platform, account),
+                )
+            self._resume(con, platform, account, operation["id"])
 
     def pause(self, con, job, capability, reason, retry_after=0):
         session = self._session(con, job["platform"])
@@ -422,7 +458,7 @@ class Availability:
                     )
             con.commit()
 
-    def _resume(self, con, platform, account):
+    def _resume(self, con, platform, account, operation_id):
         if (
             not account
             or self._session(con, platform)["check_state"] != "authenticated"
@@ -433,11 +469,30 @@ class Availability:
             (platform, account),
         ).fetchall()
         for job in jobs:
+            generation = self._session(con, platform)["generation"]
+            already_replayed = con.execute(
+                "SELECT 1 FROM access_replays r JOIN access_waits w ON w.job_id=r.job_id AND w.capability=r.capability WHERE w.job_id=? AND w.enabled=1 AND r.generation=?",
+                (job["id"], generation),
+            ).fetchone()
+            if already_replayed:
+                con.execute(
+                    "UPDATE jobs SET error=?,updated=? WHERE id=? AND state='waiting_access'",
+                    (
+                        "对照读取成功，但原目标重试后仍异常。已停止自动重试，请检查目标、范围或接口后手动恢复。",
+                        now(),
+                        job["id"],
+                    ),
+                )
+                continue
             blocked = con.execute(
                 "SELECT 1 FROM access_waits w LEFT JOIN access_state s ON s.platform=? AND s.account_id=w.account_id AND s.capability=w.capability WHERE w.job_id=? AND w.enabled=1 AND COALESCE(s.state,'unknown')<>'available'",
                 (platform, job["id"]),
             ).fetchone()
             if not blocked:
+                con.execute(
+                    "INSERT OR IGNORE INTO access_replays SELECT job_id,capability,?,?,? FROM access_waits WHERE job_id=? AND enabled=1",
+                    (generation, operation_id, now(), job["id"]),
+                )
                 con.execute(
                     "UPDATE jobs SET state='queued',updated=?,error=NULL WHERE id=? AND state='waiting_access'",
                     (now(), job["id"]),

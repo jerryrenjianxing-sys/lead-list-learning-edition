@@ -201,12 +201,20 @@ class SessionStore:
             ],
         }
 
-    def pause(self, job_id, platform, reason):
+    def pause(self, job_id, platform, reason, *, attempt=None):
         row = self.get(platform)
-        self.db.execute(
-            "INSERT INTO auth_pauses(job_id,platform,account_id,generation,reason) VALUES(?,?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET reason=excluded.reason,generation=excluded.generation,enabled=1",
-            (job_id, platform, row["account_id"], row["generation"], reason),
-        )
+        with self.db.lock,self.db.connect() as con:
+            con.execute('BEGIN IMMEDIATE')
+            job=con.execute('SELECT state,attempt,platform FROM jobs WHERE id=?',(job_id,)).fetchone()
+            if (not job or job['platform']!=platform or job['state'] not in ('queued','running','needs_login')
+                    or attempt is not None and (job['attempt']!=attempt or job['state']!='running')):
+                return False
+            con.execute(
+                "INSERT INTO auth_pauses(job_id,platform,account_id,generation,reason) VALUES(?,?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET reason=excluded.reason,generation=excluded.generation,enabled=1",
+                (job_id, platform, row["account_id"], row["generation"], reason),
+            )
+            con.commit()
+            return True
 
     def resume_matching(self, platform):
         row = self.get(platform)

@@ -3,13 +3,12 @@
 import json
 import os
 from .database import Conflict, now
-from .paths import data_root
-from .queue import _collector_databases
+from .database import worker_database
 from .recovery import event
 
 
 def report(commit, state):
-    db = _collector_databases[str(data_root())]
+    db = worker_database()
     with db.lock, db.connect() as con:
         con.execute("BEGIN IMMEDIATE")
         # Only this exact receipt is updated; a late writer cannot overwrite newer raw state.
@@ -48,50 +47,47 @@ class RawFiles:
         )
         return {"counts": {r["state"]: r["n"] for r in rows}, "rebuildable": True}
 
-    def rebuild(self, job_id):
-        with self.db.lock, self.db.connect() as con:
-            con.execute("BEGIN IMMEDIATE")
-            job = self.db.one("jobs", job_id)
-            if job["state"] in ("running", "stopping", "queued"):
-                raise Conflict("Stop this task before rebuilding its raw files")
-            rows = con.execute(
-                "SELECT DISTINCT r.record_id,r.revision,v.payload FROM raw_commits r JOIN raw_versions v ON v.record_id=r.record_id AND v.revision=r.revision WHERE r.job_id=?",
-                (job_id,),
-            ).fetchall()
-            path = self.db.root / "runs" / job_id / "rebuilt.jsonl"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            temporary = path.with_suffix(".tmp")
-            try:
-                with temporary.open("w", encoding="utf-8", newline="\n") as stream:
-                    for row in rows:
-                        stream.write(
-                            json.dumps(
-                                {
-                                    "record_id": row["record_id"],
-                                    "revision": row["revision"],
-                                    "payload": json.loads(row["payload"]),
-                                },
-                                ensure_ascii=False,
-                            )
-                            + "\n"
+    def rebuild(self, con, job_id):
+        job = self.db.one("jobs", job_id)
+        if job["state"] in ("running", "stopping", "queued"):
+            raise Conflict("Stop this task before rebuilding its raw files")
+        rows = con.execute(
+            "SELECT DISTINCT r.record_id,r.revision,v.payload FROM raw_commits r JOIN raw_versions v ON v.record_id=r.record_id AND v.revision=r.revision WHERE r.job_id=?",
+            (job_id,),
+        ).fetchall()
+        path = self.db.root / "runs" / job_id / "rebuilt.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".tmp")
+        try:
+            with temporary.open("w", encoding="utf-8", newline="\n") as stream:
+                for row in rows:
+                    stream.write(
+                        json.dumps(
+                            {
+                                "record_id": row["record_id"],
+                                "revision": row["revision"],
+                                "payload": json.loads(row["payload"]),
+                            },
+                            ensure_ascii=False,
                         )
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                os.replace(temporary, path)
-            finally:
-                temporary.unlink(missing_ok=True)
-            con.execute(
-                "UPDATE raw_commits SET state='rebuilt',updated=? WHERE job_id=?",
-                (now(), job_id),
-            )
-            event(
-                con,
-                job_id,
-                job["attempt"],
-                "Raw files rebuilt",
-                source="storage",
-                kind="raw_rebuilt",
-                details={"records": len(rows)},
-            )
-            con.commit()
-            return {"records": len(rows), "state": "rebuilt"}
+                        + "\n"
+                    )
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+        con.execute(
+            "UPDATE raw_commits SET state='rebuilt',updated=? WHERE job_id=?",
+            (now(), job_id),
+        )
+        event(
+            con,
+            job_id,
+            job["attempt"],
+            "Raw files rebuilt",
+            source="storage",
+            kind="raw_rebuilt",
+            details={"records": len(rows)},
+        )
+        return {"records": len(rows), "state": "rebuilt"}

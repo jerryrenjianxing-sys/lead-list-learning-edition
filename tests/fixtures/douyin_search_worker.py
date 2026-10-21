@@ -41,7 +41,7 @@ if config.ENABLE_GET_COMMENTS:
 
     def respond(request):
         item = next(responses_http)
-        return httpx.Response(item.get("http_status", 200), content=item.get("body", ""), request=request)
+        return httpx.Response(item.get("http_status", 200), content=item.get("body", ""),headers=item.get('headers',{}), request=request)
 
     client_module.make_async_client = lambda **kwargs: httpx.AsyncClient(transport=httpx.MockTransport(respond))
     crawler.dy_client = DouYinClient(headers={}, playwright_page=None, cookie_dict={})

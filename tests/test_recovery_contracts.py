@@ -1,8 +1,11 @@
 """Recovery behavior observed through authenticated HTTP and real worker processes."""
 
-import os
 import sys
 import time
+import pytest
+from pathlib import Path
+import json
+import psutil
 from contextlib import contextmanager
 
 from fastapi.testclient import TestClient
@@ -48,6 +51,29 @@ report('failed', state='unauthenticated', reason='logged_out')
 """
 
 
+@pytest.mark.parametrize(
+    "platform,capability,reason",
+    [
+        ("tieba", "comments", "request_failed"),
+        ("wb", "replies", "response_unconfirmed"),
+    ],
+)
+def test_parsed_comment_paths_keep_structural_failure_facts(
+    tmp_path, platform, capability, reason
+):
+    driver = Path(__file__).parent / "fixtures" / "embedded_comments_worker.py"
+    worker = f"import runpy,sys;sys.argv=[{str(driver)!r},{platform!r},sys.argv[1]];runpy.run_path({str(driver)!r},run_name='__main__')"
+    with host(tmp_path, worker) as client:
+        job = client.post(
+            "/api/v1/jobs", json={"platform": platform, "keywords": "fixture"}
+        ).json()
+        settled(client, job["id"])
+        scopes = client.get("/api/v1/jobs/" + job["id"] + "/scopes").json()["items"]
+        assert any(
+            s["capability"] == capability and s["reason"] == reason for s in scopes
+        )
+
+
 def test_stop_waiting_for_auth_is_visible_and_survives_restart(tmp_path):
     with host(tmp_path, LOGGED_OUT) as client:
         identity = client.post(
@@ -63,14 +89,23 @@ def test_stop_waiting_for_auth_is_visible_and_survives_restart(tmp_path):
 
 
 def test_cleanup_cannot_hide_a_task_that_will_automatically_resume(tmp_path):
-    with host(tmp_path,LOGGED_OUT) as client:
-        created=client.post('/api/v1/jobs',json={'platform':'dy','keywords':'fixture'}).json()
-        assert settled(client,created['id'])['state']=='needs_login'
-        explicit=client.post('/api/v1/jobs/clear-history',json={'ids':[created['id']]})
-        assert explicit.status_code==409
-        assert client.post('/api/v1/jobs/clear-history',json={}).json()['count']==0
-        client.post('/api/v1/jobs/'+created['id']+'/stop',json={})
-        assert client.post('/api/v1/jobs/clear-history',json={'ids':[created['id']]}).json()['count']==1
+    with host(tmp_path, LOGGED_OUT) as client:
+        created = client.post(
+            "/api/v1/jobs", json={"platform": "dy", "keywords": "fixture"}
+        ).json()
+        assert settled(client, created["id"])["state"] == "needs_login"
+        explicit = client.post(
+            "/api/v1/jobs/clear-history", json={"ids": [created["id"]]}
+        )
+        assert explicit.status_code == 409
+        assert client.post("/api/v1/jobs/clear-history", json={}).json()["count"] == 0
+        client.post("/api/v1/jobs/" + created["id"] + "/stop", json={})
+        assert (
+            client.post(
+                "/api/v1/jobs/clear-history", json={"ids": [created["id"]]}
+            ).json()["count"]
+            == 1
+        )
 
 
 def test_retry_preserves_each_attempt_and_its_events(tmp_path):
@@ -92,6 +127,14 @@ def test_retry_preserves_each_attempt_and_its_events(tmp_path):
             (2, "failed"),
         ]
         assert all(a["checkpoint"]["saved_records"] == 0 for a in attempts)
+        page = client.get("/api/v1/jobs/" + identity + "/attempts?limit=1").json()
+        assert len(page["items"]) == 1 and page["next_after"] == 1
+        assert (
+            client.get("/api/v1/jobs/" + identity + "/attempts?after=1&limit=1").json()[
+                "items"
+            ][0]["attempt"]
+            == 2
+        )
         events = client.get("/api/v1/jobs/" + identity + "/events?attempt=1").json()[
             "items"
         ]
@@ -356,3 +399,202 @@ record('search','restriction_explicit',scope='fixture',response={'http_status':4
             assert state["checks"] == check
             assert state["cooldown_until"] == (clock[0] + delay if delay else None)
             assert state["state"] == ("manual_action" if check == 3 else "restricted")
+
+
+@pytest.mark.parametrize(
+    "platform", ["dy", "xhs", "ks", "bili", "wb", "zhihu", "tieba"]
+)
+def test_seven_platform_terminal_search_shapes_are_observed_without_losing_parser_metadata(
+    tmp_path, platform
+):
+    driver = Path(__file__).parent / "fixtures" / "observed_platform_worker.py"
+    worker = f"import runpy,sys;sys.argv=[{str(driver)!r},{platform!r},sys.argv[1]];runpy.run_path({str(driver)!r},run_name='__main__')"
+    with host(tmp_path, worker) as client:
+        created = client.post(
+            "/api/v1/jobs",
+            json={
+                "platform": platform,
+                "keywords": "fixture",
+                "enable_comments": False,
+            },
+        ).json()
+        job = settled(client, created["id"])
+        assert job["state"] == "completed", job
+        scopes = client.get("/api/v1/jobs/" + created["id"] + "/scopes").json()["items"]
+        assert len(scopes) == 1
+        assert scopes[0]["outcome"] == "no_results"
+        assert job["status_detail"]["range_verified"]
+
+
+def test_successful_control_does_not_replay_a_persistently_bad_target_forever(tmp_path):
+    probe = 'import pathlib,sys;pathlib.Path(sys.argv[1]).write_text(\'{"verdict":"available","reason":"control_success","attempted":true,"requests":1}\')'
+    command = lambda identity, result: [sys.executable, "-c", probe, str(result)]
+    worker = """
+import os,sys
+os.environ['MEDIAWORKBENCH_JOB_ID']=sys.argv[1]
+from tools.crawl_status import record
+record('search','empty_response',scope='fixture')
+"""
+    with host(tmp_path, worker, probe_command=command) as client:
+        client.app.state.db.execute(
+            "INSERT INTO platform_sessions(platform,generation,account_id,check_state) VALUES('dy',1,'fixture-account','authenticated')"
+        )
+        created = client.post(
+            "/api/v1/jobs", json={"platform": "dy", "keywords": "fixture"}
+        ).json()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            job = client.get("/api/v1/jobs/" + created["id"]).json()
+            if job["attempt"] >= 2:
+                break
+            time.sleep(0.03)
+        time.sleep(1.2)
+        job = client.get("/api/v1/jobs/" + created["id"]).json()
+        assert job["attempt"] == 2
+        assert job["state"] == "waiting_access"
+
+
+def test_cancel_probe_reaps_its_process_tree_before_reporting_cleanup(tmp_path):
+    marker = tmp_path / "probe-processes.json"
+    probe = f"""
+import subprocess,sys,time,os,json,pathlib
+child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(120)'])
+pathlib.Path({str(marker)!r}).write_text(json.dumps([os.getpid(),child.pid]))
+time.sleep(120)
+"""
+    command = lambda identity, result: [sys.executable, "-c", probe]
+    with host(tmp_path, "", probe_command=command) as client:
+        identity = client.post(
+            "/api/v1/platforms/dy/probes", json={"capability": "search"}
+        ).json()["id"]
+        deadline = time.monotonic() + 5
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert marker.exists()
+        assert (
+            client.post(
+                "/api/v1/operations/" + identity + "/cancel", json={}
+            ).status_code
+            == 200
+        )
+        while time.monotonic() < deadline:
+            operation = client.get("/api/v1/operations/" + identity).json()
+            if operation["state"] == "cancelled" and "cleanup_complete" in operation:
+                break
+            time.sleep(0.02)
+        assert operation["cleanup_complete"] is True
+        assert operation["attempted"] is True
+        assert not any(psutil.pid_exists(pid) for pid in json.loads(marker.read_text()))
+        assert not (tmp_path / "probes" / identity).exists()
+
+
+def test_cancelling_probe_recovers_after_host_restart(tmp_path):
+    app = make_app(tmp_path, run_queue=False)
+    with TestClient(app) as client:
+        client.get("/api/v1/session")
+        identity = client.post(
+            "/api/v1/platforms/dy/probes", json={"capability": "search"}
+        ).json()["id"]
+        app.state.db.execute(
+            "UPDATE operations SET state='cancelling' WHERE id=?", (identity,)
+        )
+    with host(tmp_path, "") as client:
+        operation = client.get("/api/v1/operations/" + identity).json()
+        assert operation["state"] == "failed"
+        assert operation["reason_code"] == "host_interrupted"
+        assert client.post("/api/v1/host/prepare-update", json={}).status_code == 200
+
+
+def test_raw_rebuild_obeys_update_freeze_and_idempotent_receipt(tmp_path):
+    with host(tmp_path, "") as client:
+        created = client.post(
+            "/api/v1/jobs", json={"platform": "dy", "keywords": "fixture"}
+        ).json()
+        settled(client, created["id"])
+        key = {"Idempotency-Key": "raw-rebuild-once"}
+        first = client.post(
+            "/api/v1/jobs/" + created["id"] + "/raw-files/rebuild", json={}, headers=key
+        )
+        assert first.status_code == 200
+        assert (
+            client.post(
+                "/api/v1/jobs/" + created["id"] + "/raw-files/rebuild",
+                json={},
+                headers=key,
+            ).json()
+            == first.json()
+        )
+        events = client.get("/api/v1/jobs/" + created["id"] + "/events").json()["items"]
+        assert sum(event.get("kind") == "raw_rebuilt" for event in events) == 1
+        assert client.post("/api/v1/host/prepare-update", json={}).status_code == 200
+        assert (
+            client.post(
+                "/api/v1/jobs/" + created["id"] + "/raw-files/rebuild", json={}
+            ).status_code
+            == 409
+        )
+
+
+def test_probe_directory_failure_keeps_collection_queue_alive(tmp_path):
+    (tmp_path / "probes").write_text("blocks probe directory creation")
+    with host(tmp_path, "") as client:
+        identity = client.post(
+            "/api/v1/platforms/dy/probes", json={"capability": "search"}
+        ).json()["id"]
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            operation = client.get("/api/v1/operations/" + identity).json()
+            if operation["state"] not in ("accepted", "running", "cancelling"):
+                break
+            time.sleep(0.02)
+        assert operation["attempted"] is False
+        assert operation["reason_code"] == "storage_error"
+        assert operation["cleanup_complete"] is True
+        created = client.post(
+            "/api/v1/jobs", json={"platform": "xhs", "keywords": "fixture"}
+        ).json()
+        assert settled(client, created["id"])["state"] == "completed"
+
+
+@pytest.mark.parametrize(
+    "scenario,capability,expected_requests,verdict",
+    [
+        ("network", "search", 1, "network_error"),
+        ("comments", "comments", 2, "available"),
+    ],
+)
+def test_real_probe_worker_shares_request_budget_without_transport_retry_amplification(
+    tmp_path, scenario, capability, expected_requests, verdict
+):
+    driver = Path(__file__).parent / "fixtures" / "probe_transport_worker.py"
+    marker = tmp_path / "actual-network-calls.json"
+    command = lambda identity, result: [
+        sys.executable,
+        str(driver),
+        identity,
+        str(result),
+        str(marker),
+        scenario,
+    ]
+    with host(tmp_path, "", probe_command=command) as client:
+        client.app.state.db.execute(
+            "INSERT INTO access_samples VALUES('dy','','comments',?,?)",
+            (json.dumps({"aweme_id": "sample"}), "2026-10-21T00:00:00Z"),
+        )
+        identity = client.post(
+            "/api/v1/platforms/dy/probes", json={"capability": capability}
+        ).json()["id"]
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            operation = client.get("/api/v1/operations/" + identity).json()
+            if operation["state"] not in ("accepted", "running", "cancelling"):
+                break
+            time.sleep(0.03)
+        assert operation["verdict"] == verdict, operation
+        assert len(json.loads(marker.read_text())) == expected_requests
+        assert (
+            operation["requests"] == expected_requests + 1
+        )  # Includes the initial navigation.
+        assert operation["requests"] <= 3
+        assert operation["cleanup_complete"] is True
+        assert client.get("/api/v1/datasets").json()["items"] == []

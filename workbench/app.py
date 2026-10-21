@@ -35,6 +35,7 @@ from .models import (
     ExportRequest,
     JobHistoryRequest,
     SelfTestRequest,
+    ProbeRequest,
 )
 from .paths import ROOT, PRODUCT, DISPLAY_NAME, data_root, discovery_path
 from .queue import Queue, PLATFORMS, create_job, control, job_view, clear_history
@@ -317,8 +318,8 @@ def make_app(root=None, *, run_queue=True):
         return Recovery(db).events(job_id, after, limit, attempt)
 
     @app.get('/api/v1/jobs/{job_id}/attempts')
-    def attempts(job_id: str):
-        return Recovery(db).attempts(job_id)
+    def attempts(job_id: str, after: int = Query(0,ge=0), limit: int = Query(200,ge=1,le=2000)):
+        return Recovery(db).attempts(job_id,after,limit)
 
     @app.get("/api/v1/jobs/{job_id}/qrcode")
     def qrcode(job_id: str):
@@ -357,9 +358,9 @@ def make_app(root=None, *, run_queue=True):
         return RawFiles(db).status(job_id)
 
     @app.post('/api/v1/jobs/{job_id}/raw-files/rebuild')
-    def rebuild_raw(job_id: str):
+    def rebuild_raw(job_id: str, request: Request):
         from .raw_files import RawFiles
-        return RawFiles(db).rebuild(job_id)
+        return write(request,{},lambda con: RawFiles(db).rebuild(con,job_id))
 
     @app.post('/api/v1/operations/{operation_id}/cancel')
     def cancel_operation(operation_id: str, request: Request):
@@ -369,12 +370,10 @@ def make_app(root=None, *, run_queue=True):
         return write(request, {}, lambda con: Recovery.cancel_session_operation(con,operation_id))
 
     @app.post('/api/v1/platforms/{platform}/probes')
-    def platform_probe(platform: str, body: dict, request: Request):
+    def platform_probe(platform: str, body: ProbeRequest, request: Request):
         if platform not in PLATFORMS:
             raise HTTPException(404)
-        if set(body) != {'capability'}:
-            raise ValueError('Supply capability only; probe controls and workers are internal')
-        return write(request,body,lambda con: availability.request(con,platform,body['capability']))
+        return write(request,body.model_dump(),lambda con: availability.request(con,platform,body.capability))
 
     @app.get('/api/v1/platforms/{platform}/availability')
     def availability_status(platform: str):

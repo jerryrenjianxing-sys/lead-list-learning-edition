@@ -198,6 +198,12 @@ class SessionManager:
             self.lease=None
             self.last_used=time.monotonic()
 
+    async def _abort_probe(self,operation_id):
+        # Serialized behind cancelled startup: completion acknowledges its finally block.
+        if self.lease and self.lease.get('operation_id')==operation_id:
+            await self._release_probe(self.lease['lease'])
+        return {'cleanup_complete':not self.lease or self.lease.get('operation_id')!=operation_id}
+
     async def _launch(self, platform):
         from playwright.async_api import async_playwright
         from tools.browser_launcher import BrowserLauncher
@@ -406,7 +412,7 @@ class SessionManager:
                 and job["dataset_id"]
             )
             if changed:
-                self.store.pause(job["id"], self.platform, "account_changed")
+                self.store.pause(job["id"], self.platform, "account_changed",attempt=job['attempt'])
             self.identity = identity or {}
             self.verified = True
             self.pending_auth_generation |= new_auth
@@ -441,8 +447,9 @@ class SessionManager:
                         ]
                         if self.lease.get('job_id'):
                             session=self.store.get(self.platform)
-                            self.db.execute('UPDATE execution_sessions SET generation=?,account_id=? WHERE job_id=? AND attempt=? AND (account_id IS NULL OR account_id=?)',
-                                            (session['generation'],session['account_id'],self.lease['job_id'],self.lease['attempt'],session['account_id']))
+                            options=json.loads(job['options'])
+                            self.db.execute('UPDATE execution_sessions SET generation=?,account_id=? WHERE job_id=? AND attempt=? AND (account_id IS NULL OR account_id=? OR ?)',
+                                            (session['generation'],session['account_id'],self.lease['job_id'],self.lease['attempt'],session['account_id'],options.get('crawler_type')=='login'))
             return saved
         except Conflict:
             return False

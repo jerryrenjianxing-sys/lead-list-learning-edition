@@ -8,7 +8,7 @@ const outcomes: Record<string, string> = {
   normal_end: "已到平台终页", quantity_reached: "达到设置数量", no_results: "正常无结果",
   abnormal_stop: "异常停止，范围未完成", not_executed: "未执行", user_stopped: "用户停止", running: "执行中",
 };
-export default function RecoveryPanel({ jobId }: { jobId: string }) {
+export default function RecoveryPanel({ jobId,revision }: { jobId: string; revision: string }) {
   const [attempts, setAttempts] = useState<Attempt[]>([]);
   const [attempt, setAttempt] = useState(0);
   const [events, setEvents] = useState<Fact[]>([]);
@@ -28,14 +28,14 @@ export default function RecoveryPanel({ jobId }: { jobId: string }) {
   }
   useEffect(() => {
     let active = true;
-    setError(""); setAttempts([]); setEvents([]); setScopes([]); setAttempt(0);
+    setError("");
     api(`/jobs/${jobId}/attempts`).then(result => {
       if (!active) return;
       setAttempts(result.items);
-      setAttempt(result.items.at(-1)?.attempt || 0);
+      setAttempt(previous => previous || result.items.at(-1)?.attempt || 0);
     }).catch(e => { if (active) setError(String(e)); });
     return () => { active = false; };
-  }, [jobId]);
+  }, [jobId,revision]);
   useEffect(() => {
     if (!attempt) return;
     let active = true;
@@ -45,7 +45,7 @@ export default function RecoveryPanel({ jobId }: { jobId: string }) {
       setScopes(ranges.items); setScopeNext(ranges.next_after);
     }).catch(e => { if (active) setError(String(e)); });
     return () => { active = false; };
-  }, [jobId, attempt]);
+  }, [jobId, attempt,revision]);
   return <div className="wb-recovery">
     <h3>轮次与范围</h3>
     {error && <p role="alert">读取历史失败：{error}</p>}
@@ -60,6 +60,7 @@ export default function RecoveryPanel({ jobId }: { jobId: string }) {
     </p>)}
     {scopeNext && <button onClick={() => void loadScopes(scopeNext, true).catch(e => setError(String(e)))}>更多范围</button>}
     <h3>本轮时间线</h3>
+    <button onClick={() => void Promise.all([load(),loadScopes()]).catch(e => setError(String(e)))}>刷新本轮</button>
     <pre className="wb-log">{events.map(event => `${new Date(event.created).toLocaleString("zh-CN")} [${event.source || "旧记录"}${event.capability ? "/"+event.capability : ""}] ${event.message}`).join("\n") || "本轮暂无事件"}</pre>
     {next && <button onClick={() => void load(next, true).catch(e => setError(String(e)))}>更晚的事件</button>}
   </div>;

@@ -31,7 +31,7 @@ type Job = {
   attempt: number;
   dataset_id: string | null;
   error?: string | null;
-  status_detail?: { counts: { inserted: number; updated: number; unchanged: number; dataset_total: number }; range_verified: boolean; next_actions: { id: string; label: string; enabled: boolean }[] };
+  status_detail?: { counts: { inserted: number; updated: number; unchanged: number; dataset_total: number }; range_verified: boolean; explanation: string; next_actions: { id: string; label: string; enabled: boolean }[] };
 };
 const platforms = [
   ["xhs", "小红书"],
@@ -61,6 +61,7 @@ const labels: Record<string, string> = {
   interrupted: "已中断",
   failed: "失败",
   partial: "部分完成",
+  unconfirmed: "范围未确认",
   needs_login: "需要登录",
   waiting_access: "等待访问恢复",
   waiting_agent: "等待 Agent 分析",
@@ -76,6 +77,7 @@ function Status({ value }: { value: string }) {
 function jobStatus(job: Job): string {
   if (job.state === "running" && job.options.crawler_type === "login") return "logging_in";
   if (job.state === "completed" && job.checkpoint?.collection?.empty) return "no_results";
+  if (job.state === "completed" && job.options.crawler_type !== "login" && job.status_detail?.range_verified === false) return "unconfirmed";
   return job.state;
 }
 function ResourceFeedback({ title, state, retry }: { title: string; state?: ResourceStatus; retry: () => void }) {
@@ -110,7 +112,6 @@ export default function Workbench() {
       enrich_profiles: false,
     });
   const [jobId, JI] = useState(""),
-    [events, EV] = useState<Item[]>([]),
     [qr, QR] = useState(false);
   const [datasetId, DI] = useState(""),
     [records, R] = useState<Item[]>([]),
@@ -224,22 +225,6 @@ export default function Workbench() {
     const timer = setInterval(() => CLOCK(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [tab]);
-  useEffect(() => {
-    if (!jobId || tab !== "jobs") return;
-    let active = true;
-    const load = () =>
-      api(`/jobs/${jobId}/events?limit=2000`)
-        .then((r) => {
-          if (active) EV(r.items);
-        })
-        .catch((e) => E(String(e)));
-    void load();
-    const timer = setInterval(load, 2000);
-    return () => {
-      active = false;
-      clearInterval(timer);
-    };
-  }, [jobId, tab]);
   async function perform(action: () => Promise<unknown>, message = "") {
     B(true);
     E("");
@@ -258,7 +243,6 @@ export default function Workbench() {
     const r = await api("/jobs/clear-history", "POST", ids ? { ids } : {});
     if (!ids || ids.includes(jobId)) {
       JI("");
-      EV([]);
       QR(false);
     }
     N(`已清理 ${r.count} 条任务记录，数据、成果和登录信息仍保留。`);
@@ -638,8 +622,11 @@ export default function Workbench() {
                       <small>{j.checkpoint?.collection?.message}</small>
                     )}
                     {j.status_detail && j.options.crawler_type !== "login" && <small>本轮新增 {j.status_detail.counts.inserted} · 更新 {j.status_detail.counts.updated} · 重复 {j.status_detail.counts.unchanged} · 累计 {j.status_detail.counts.dataset_total}{!j.status_detail.range_verified ? " · 范围尚未全部确认" : ""}</small>}
+                    {j.status_detail?.explanation && <small>{j.status_detail.explanation}</small>}
                   </button>
                   <Status value={jobStatus(j)} />
+                  {j.state === "needs_login" && <button onClick={() => goLogin(j.platform)}>去平台登录</button>}
+                  {j.state === "waiting_access" && j.status_detail?.next_actions.some(a => a.id === "resume" && a.enabled) && <button disabled={busy} onClick={() => void perform(() => api(`/jobs/${j.id}/resume`,"POST",{}))}>重试原任务</button>}
                   {["queued", "running", "needs_login", "waiting_access"].includes(j.state) ? (
                     <button
                       disabled={busy}
@@ -689,11 +676,12 @@ export default function Workbench() {
                   任务详情 <small>{jobId}</small>
                 </h2>
                 <p>
-                  {jobs.find((j) => j.id === jobId)?.error ||
+                  {jobs.find((j) => j.id === jobId)?.status_detail?.explanation ||
+                    jobs.find((j) => j.id === jobId)?.error ||
                     jobs.find((j) => j.id === jobId)?.checkpoint?.collection?.message ||
                     "运行日志与已保存进度"}
                 </p>
-                <RecoveryPanel key={jobId} jobId={jobId} />
+                <RecoveryPanel key={jobId} jobId={jobId} revision={`${jobs.find(j => j.id === jobId)?.attempt}:${jobs.find(j => j.id === jobId)?.state}`} />
                 <button onClick={() => QR(!qr)}>查看登录二维码</button>
                 {qr && (
                   <div className="wb-qr">
@@ -703,11 +691,6 @@ export default function Workbench() {
                     />
                   </div>
                 )}
-                <pre className="wb-log">
-                  {events
-                    .map((e) => `${date(e.created)}  ${e.message}`)
-                    .join("\n") || "等待任务日志…"}
-                </pre>
               </section>
             )}
           </>

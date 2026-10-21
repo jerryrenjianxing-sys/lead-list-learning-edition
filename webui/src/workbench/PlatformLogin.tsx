@@ -151,6 +151,7 @@ export default function PlatformLogin({
                 <p>{operationNames[operation.kind] || operation.kind}：{operationStates[operation.state] || operation.state} · {operation.id.slice(0,8)}</p>
                 {operation.reason_code && <small>原因：{operation.reason_code}{operation.attempted === false ? " · 未执行平台请求" : ""}</small>}
                 {operation.state === "failed" && <small>可查看详情，处理原因后重试。</small>}
+                {operation.job_id && <button onClick={() => details(operation.job_id)}>查看本次操作</button>}
                 {operation.kind === "probe" && ["accepted","running"].includes(operation.state) && <button onClick={() => cancelOperation(operation.id)}>取消探测</button>}
               </div>}
               {!!p.availability?.items?.length && <div className="wb-availability">

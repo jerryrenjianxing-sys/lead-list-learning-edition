@@ -39,7 +39,7 @@ from .help import TieBaExtractor
 PC_SIGN_SECRET = "36770b1f34c9bbf2e7d1a99d2b82fa9e"
 
 
-from workbench.platform_observation import observed
+from workbench.platform_observation import observed, parsed_fact
 
 class BaiduTieBaClient(AbstractApiClient):
 
@@ -149,7 +149,6 @@ class BaiduTieBaClient(AbstractApiClient):
             raise Exception(f"Can not get Tieba tbs from pc sync API: {sync_data}")
         return self._pc_tbs
 
-    @observed('tieba','comments')
     async def _get_pc_page_data(self, note_id: str, page: int = 1) -> Dict:
         tbs = await self._get_pc_tbs()
         return await self._fetch_json_by_browser(
@@ -375,7 +374,7 @@ class BaiduTieBaClient(AbstractApiClient):
         self.headers["Cookie"] = cookie_str
         utils.logger.info("[BaiduTieBaClient.update_cookies] Cookie has been updated")
 
-    @observed('tieba','search')
+    @observed('tieba','search',parsed=True)
     async def get_notes_by_keyword(
         self,
         keyword: str,
@@ -422,6 +421,8 @@ class BaiduTieBaClient(AbstractApiClient):
                 use_sign=True,
             )
             notes = self._page_extractor.extract_search_note_list_from_api(api_data)[:page_size]
+            from workbench.platform_observation import record_response
+            record_response('tieba','search',keyword,api_data)
             utils.logger.info(f"[BaiduTieBaClient.get_notes_by_keyword] Extracted {len(notes)} posts")
             return notes
 
@@ -477,6 +478,7 @@ class BaiduTieBaClient(AbstractApiClient):
 
         result: List[TiebaComment] = []
         current_page = 1
+        parsed_fact('comments',note_detail.note_id,'started')
 
         while (
             note_detail.total_replay_page >= current_page
@@ -494,12 +496,16 @@ class BaiduTieBaClient(AbstractApiClient):
                 )
 
                 if not comments:
+                    parsed_fact('comments',note_detail.note_id,'response_unconfirmed',page=current_page)
                     utils.logger.info(f"[BaiduTieBaClient.get_note_all_comments] Page {current_page} has no comments, stopping crawl")
                     break
 
                 # Limit comment count
                 if max_count > 0 and len(result) + len(comments) > max_count:
                     comments = comments[:max_count - len(result)]
+
+                reason='limit_reached' if max_count>0 and len(result)+len(comments)>=max_count else 'source_exhausted' if current_page>=note_detail.total_replay_page else 'request_succeeded'
+                parsed_fact('comments',note_detail.note_id,reason,page=current_page)
 
                 if callback:
                     await callback(note_detail.note_id, comments)
@@ -515,6 +521,7 @@ class BaiduTieBaClient(AbstractApiClient):
                 current_page += 1
 
             except Exception as e:
+                parsed_fact('comments',note_detail.note_id,'request_failed',page=current_page)
                 utils.logger.error(f"[BaiduTieBaClient.get_note_all_comments] Failed to get page {current_page} comments: {e}")
                 break
 
@@ -552,6 +559,9 @@ class BaiduTieBaClient(AbstractApiClient):
 
             current_page = 1
             max_sub_page_num = parment_comment.sub_comment_count // 10 + 1
+            scope=f'{parment_comment.note_id}:{parment_comment.comment_id}'
+            parsed_fact('replies',scope,'started')
+            parent_received=0
 
             while max_sub_page_num >= current_page:
                 # Construct sub-comment URL
@@ -580,12 +590,15 @@ class BaiduTieBaClient(AbstractApiClient):
                     )
 
                     if not sub_comments:
+                        parsed_fact('replies',scope,'source_exhausted' if parent_received>=parment_comment.sub_comment_count else 'response_unconfirmed',page=current_page)
                         utils.logger.info(
                             f"[BaiduTieBaClient.get_comments_all_sub_comments] "
                             f"Comment {parment_comment.comment_id} page {current_page} has no sub-comments, stopping crawl"
                         )
                         break
 
+                    parent_received+=len(sub_comments)
+                    parsed_fact('replies',scope,'source_exhausted' if parent_received>=parment_comment.sub_comment_count else 'request_succeeded',page=current_page)
                     if callback:
                         await callback(parment_comment.note_id, sub_comments)
 
@@ -594,6 +607,7 @@ class BaiduTieBaClient(AbstractApiClient):
                     current_page += 1
 
                 except Exception as e:
+                    parsed_fact('replies',scope,'request_failed',page=current_page)
                     utils.logger.error(
                         f"[BaiduTieBaClient.get_comments_all_sub_comments] "
                         f"Failed to get comment {parment_comment.comment_id} page {current_page} sub-comments: {e}"
@@ -690,6 +704,7 @@ class BaiduTieBaClient(AbstractApiClient):
             utils.logger.error(f"[BaiduTieBaClient.get_creator_info_by_url] Failed to get creator info: {e}")
             raise
 
+    @observed('tieba','creator')
     async def get_notes_by_creator_portrait(
         self, portrait: str, page_number: int, page_size: int = 20
     ) -> Dict:

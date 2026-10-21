@@ -3,7 +3,6 @@
 from __future__ import annotations
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import time
@@ -16,7 +15,6 @@ def run_probe(db, operation, stopping, sessions=None, command=None):
     started = time.monotonic()
     deadline = started + 60
     directory = db.root / "probes" / operation["id"]
-    directory.mkdir(parents=True, exist_ok=True)
     result_path = directory / "result.json"
     process = lease = scope = None
     result = {
@@ -26,7 +24,12 @@ def run_probe(db, operation, stopping, sessions=None, command=None):
         "requests": 0,
     }
     cleanup = True
+    directory_created = False
+    phase = "storage"
     try:
+        directory.mkdir(parents=True, exist_ok=True)
+        directory_created = True
+        phase = "browser"
         if sessions:
             lease = sessions.call(
                 "acquire_probe",
@@ -61,6 +64,7 @@ def run_probe(db, operation, stopping, sessions=None, command=None):
                 str(result_path),
             ]
         )
+        phase = "worker_start"
         process = subprocess.Popen(
             argv,
             cwd=ROOT,
@@ -108,6 +112,8 @@ def run_probe(db, operation, stopping, sessions=None, command=None):
                 result["reason"] = "worker_failed"
     except TimeoutError:
         result["reason"] = "startup_timeout"
+    except OSError:
+        result["reason"] = "storage_error" if phase == "storage" else "startup_failed"
     except Exception:
         result["reason"] = "startup_failed" if process is None else "worker_failed"
     finally:
@@ -117,9 +123,9 @@ def run_probe(db, operation, stopping, sessions=None, command=None):
             except OSError:
                 cleanup = False
         if process and process.poll() is None:
-            kill_tree(process.pid)
+            kill_tree(process.pid, timeout=max(0, deadline - time.monotonic()))
             try:
-                process.wait(timeout=max(0.1, deadline - time.monotonic()))
+                process.wait(timeout=max(0, deadline - time.monotonic()))
             except subprocess.TimeoutExpired:
                 cleanup = False
         if lease:
@@ -127,15 +133,26 @@ def run_probe(db, operation, stopping, sessions=None, command=None):
                 sessions.call(
                     "release_probe",
                     lease=lease["lease"],
-                    timeout=max(1, deadline - time.monotonic()),
+                    timeout=max(0.01, deadline - time.monotonic()),
                 )
             except Exception:
                 cleanup = False
-        try:
-            result_path.unlink(missing_ok=True)
-            directory.rmdir()
-        except OSError:
-            cleanup = False
+        elif sessions:
+            try:
+                acknowledged = sessions.call(
+                    "abort_probe",
+                    operation_id=operation["id"],
+                    timeout=max(0.01, deadline - time.monotonic()),
+                )
+                cleanup = cleanup and acknowledged["cleanup_complete"]
+            except Exception:
+                cleanup = False
+        if directory_created:
+            try:
+                result_path.unlink(missing_ok=True)
+                directory.rmdir()
+            except OSError:
+                cleanup = False
     return {
         **result,
         "cleanup_complete": cleanup,

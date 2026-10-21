@@ -408,7 +408,7 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
                         try:
                             sub_comments_res = await self.get_sub_comments(aweme_id, comment_id, sub_comments_cursor)
                         except DataFetchError as exc:
-                            crawl_status.record("replies", exc.reason, scope=reply_scope, response={"http_status": exc.http_status})
+                            crawl_status.record("replies", exc.reason, scope=reply_scope, response={"http_status": exc.http_status, "retry_after": exc.retry_after})
                             raise
                         sub_comments, sub_comments_has_more, reply_reason = _comment_page(sub_comments_res)
                         sub_comments_cursor = sub_comments_res.get("cursor", 0) if isinstance(sub_comments_res, dict) else 0

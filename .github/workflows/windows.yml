@@ -64,12 +64,6 @@ jobs:
         run: |
           $version = $env:RELEASE_TAG.Substring(1)
           $release = Join-Path $PWD "release/$version"
-          $legacy = Join-Path $PWD '.cache/baseline041'
-          New-Item -ItemType Directory -Path $legacy -Force | Out-Null
-          gh release download v0.4.1 --repo jerryrenjianxing-sys/lead-list-learning-edition --pattern 'MediaWorkbench.Desktop-win-preview-Setup.exe' --dir $legacy
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $oldSetup = Join-Path $legacy 'MediaWorkbench.Desktop-win-preview-Setup.exe'
-          if ((Get-FileHash -LiteralPath $oldSetup -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'f7070135ffacfaa8c449f1b23ecceb8d15f4a9a0b6bdcbc921702ea05003497c') { throw 'Baseline installer fixture checksum mismatch' }
           .venv/Scripts/python.exe packaging/prepare_test_release.py --source build/MediaWorkbench --output .cache/private-upgrade
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $private = Get-Content '.cache/private-upgrade/PRIVATE_TEST_RESULT.json' -Raw | ConvertFrom-Json
@@ -77,9 +71,21 @@ jobs:
           $full = @($feed.Assets | Where-Object { $_.Version -eq $version -and $_.Type -eq 'Full' -and $_.PackageId -eq 'MediaWorkbench.Desktop' })
           $setups = @(Get-ChildItem -LiteralPath $release -Filter '*Setup.exe')
           if ($full.Count -ne 1 -or $setups.Count -ne 1) { throw 'Current installer or update package is ambiguous' }
-          .venv/Scripts/python.exe tests/electron_upgrade_smoke.py --baseline-version 0.4.1 --old-setup $oldSetup --new-setup ($setups[0].FullName) --new-package (Join-Path $release ($full[0].FileName)) --version $version --next-package $private.package --next-version $private.version --output .cache/upgrade-smoke-raw.json
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          .venv/Scripts/python.exe packaging/collect_delivery.py --version $version --upgrade-result .cache/upgrade-smoke-raw.json
+          $baselines = @{
+            '0.4.3' = '7a582764a6dba5d4d6aaf1d1cfcc13265ebd86f7a316b77f33ec69663525b50f'
+            '0.4.4' = '00f7b622c53c083d351380dcb211f099bc8b5f306d25309e58407820b068c585'
+          }
+          foreach ($baseline in @('0.4.3', '0.4.4')) {
+            $legacy = Join-Path $PWD ".cache/baseline-$baseline"
+            New-Item -ItemType Directory -Path $legacy -Force | Out-Null
+            gh release download "v$baseline" --repo jerryrenjianxing-sys/lead-list-learning-edition --pattern 'MediaWorkbench.Desktop-win-preview-Setup.exe' --dir $legacy
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $oldSetup = Join-Path $legacy 'MediaWorkbench.Desktop-win-preview-Setup.exe'
+            if ((Get-FileHash -LiteralPath $oldSetup -Algorithm SHA256).Hash.ToLowerInvariant() -ne $baselines[$baseline]) { throw 'Baseline installer fixture checksum mismatch' }
+            .venv/Scripts/python.exe tests/electron_upgrade_smoke.py --baseline-version $baseline --old-setup $oldSetup --new-setup ($setups[0].FullName) --new-package (Join-Path $release ($full[0].FileName)) --version $version --next-package $private.package --next-version $private.version --output ".cache/upgrade-$baseline-raw.json"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          .venv/Scripts/python.exe packaging/collect_delivery.py --version $version --upgrade-result .cache/upgrade-0.4.3-raw.json --additional-upgrade-result .cache/upgrade-0.4.4-raw.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify the actual native desktop updater
         run: |

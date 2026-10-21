@@ -9,6 +9,11 @@ class SelfTestRequest(BaseModel):
     include_network: bool = True
 
 
+class ProbeRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    capability: Literal['search','detail','creator','comments','replies','profile']
+
+
 class CrawlRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     platform: Platform

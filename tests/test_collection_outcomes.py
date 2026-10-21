@@ -241,3 +241,18 @@ def test_captured_empty_search_is_not_reported_as_success(tmp_path):
             assert job["error"], "An unconfirmed empty response needs an actionable reason"
         finally:
             queue.close()
+
+
+def test_platform_longer_retry_after_survives_nested_comment_error_handlers(tmp_path):
+    job=crawl_search(tmp_path,{
+        'responses':[{'status_code':0,'data':[{'aweme_info':{'aweme_id':'v1','author':{}}}],'has_more':0}],
+        'comments_http':[{'http_status':429,'headers':{'Retry-After':'7200'},'body':'not logged'}],
+    })
+    assert job['state']=='waiting_access'
+    restriction=next(issue for issue in job['checkpoint']['collection']['issues'] if issue['reason']=='restriction_explicit')
+    assert restriction['response']['retry_after']==7200
+    with TestClient(make_app(tmp_path,run_queue=False)) as client:
+        client.get('/api/v1/session')
+        state=client.get('/api/v1/platforms/dy/availability').json()['items']
+        comments=next(item for item in state if item['capability']=='comments')
+        assert comments['cooldown_until']>=time.time()+7190

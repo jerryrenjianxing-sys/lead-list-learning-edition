@@ -1,5 +1,5 @@
 {
   "publication": "preview",
-  "version": "0.4.4",
-  "reason": "User requested diagnosis and repair of collection termination and error classification, preserving legitimate no-next-page completion and distinguishing unconfirmed responses. Continue the approved preview release and local upgrade workflow; real-platform limits remain separately recorded."
+  "version": "0.5.0",
+  "reason": "User approved public preview after state/recovery acceptance, dual 0.4.3/0.4.4 migration, private next-patch update and rehearsed 0.4.3 rollback. Preserve immutable history, frozen crawler/runtime dependencies and explicit pending real-platform/long-duration checks; update local installation only after backup and when idle."
 }

@@ -46,7 +46,7 @@ from .exception import DataFetchError
 from .field import SearchType
 
 
-from workbench.platform_observation import observed
+from workbench.platform_observation import observed, parsed_fact
 
 class WeiboClient(ProxyRefreshMixin):
 
@@ -275,7 +275,10 @@ class WeiboClient(ProxyRefreshMixin):
         for comment in comment_list:
             sub_comments = comment.get("comments")
             if sub_comments and isinstance(sub_comments, list):
-                await callback(note_id, sub_comments)
+                scope=f"{note_id}:{comment.get('id') or comment.get('idstr') or 'unknown'}"
+                parsed_fact('replies',scope,'source_exhausted' if comment.get('total_number')==len(sub_comments) else 'response_unconfirmed')
+                if callback:
+                    await callback(note_id, sub_comments)
                 res_sub_comments.extend(sub_comments)
         return res_sub_comments
 

@@ -52,10 +52,17 @@ async function main() {
       if (datasetsOnly && ['/jobs', '/analyses', '/artifacts', '/platforms'].includes(routePath)) unrelatedReads.push(routePath);
       if (routePath === '/diagnostics' && failDiagnostics) return route.fulfill({ status: 503, json: { detail: '夹具后台状态暂不可读' } });
       if (routePath === '/jobs' && failJobs) return route.fulfill({ status: 503, json: { detail: '夹具任务暂不可读' } });
+      if (routePath === '/jobs/fixture-job/attempts') return route.fulfill({ json: { items: [{ attempt: 1, state: 'interrupted', origin: 'live' }, { attempt: 2, state: 'waiting_access', origin: 'live' }], history_complete: true } });
+      if (routePath === '/jobs/fixture-job/events') {
+        const attempt = Number(url.searchParams.get('attempt') || 2), after = Number(url.searchParams.get('after') || 0);
+        return route.fulfill({ json: { items: [{ seq: after ? 2 : 1, attempt, created: '2026-10-21T01:00:00Z', source: 'platform', capability: 'comments', kind: 'scope', message: attempt === 1 ? '旧轮次已保存' : after ? '本轮后续证据' : '本轮访问暂停' }], next_after: after ? null : 1 } });
+      }
+      if (routePath === '/jobs/fixture-job/scopes') return route.fulfill({ json: { items: [{ cursor: 1, capability: 'comments', scope: 'fixture-content', outcome: 'abnormal_stop', reason: 'empty_unconfirmed', counts: { inserted: 1, updated: 2, unchanged: 3 } }], next_after: null } });
+      if (routePath === '/jobs/fixture-job/stop') { jobMode = 'cancelled'; return route.fulfill({ json: { id: 'fixture-job', state: 'cancelled' } }); }
       const fixtures = {
         '/session': { token: 'fixture-only-no-user-credential' },
         '/health': { version: '0.4.0-test' },
-        '/jobs': { items: [{ id: 'fixture-job', platform: 'wb', options: { keywords: '夹具关键词', crawler_type: 'search' }, state: jobMode === 'unconfirmed' ? 'interrupted' : 'completed', checkpoint: { collection: { empty: jobMode === 'empty', message: jobMode === 'unconfirmed' ? '平台返回空列表，尚未确认结果。' : '平台本轮返回无搜索结果。', issues: jobMode === 'unconfirmed' ? [{ reason: 'empty_unconfirmed' }] : [] } }, created: '2026-10-19T01:00:00Z', attempt: 1 }], archived_count: 0 },
+        '/jobs': { items: [{ id: 'fixture-job', platform: 'wb', options: { keywords: '夹具关键词', crawler_type: 'search' }, state: jobMode === 'waiting' ? 'waiting_access' : jobMode === 'cancelled' ? 'cancelled' : jobMode === 'unconfirmed' ? 'interrupted' : 'completed', status_detail: jobMode === 'waiting' ? { counts: { inserted: 1, updated: 2, unchanged: 3, dataset_total: 20 }, range_verified: false, explanation: '夹具：评论等待访问恢复，搜索状态保持独立。', next_actions: [{ id: 'stop', label: '停止自动续接', enabled: true }] } : undefined, checkpoint: { collection: { empty: jobMode === 'empty', message: jobMode === 'unconfirmed' ? '平台返回空列表，尚未确认结果。' : '平台本轮返回无搜索结果。', issues: jobMode === 'unconfirmed' ? [{ reason: 'empty_unconfirmed' }] : [] } }, created: '2026-10-19T01:00:00Z', attempt: jobMode === 'waiting' ? 2 : 1 }], archived_count: 0 },
         '/datasets': { items: [{ id: 'fixture-data', name: '夹具数据集', record_count: 37, created: '2026-10-19T01:00:00Z' }] },
         '/analyses': { items: [] },
         '/platforms': { items: [{ id: 'dy', name: '抖音', can_select: true, login_state: 'authenticated' }] },
@@ -130,6 +137,22 @@ async function main() {
     assert.equal(await page.getByText('无搜索结果', { exact: true }).count(), 0);
     assert.equal(await page.getByText('已中断', { exact: true }).count(), 1);
     checks.push('Normal empty search and unconfirmed collection have distinct visible outcomes');
+    jobMode = 'waiting';
+    await page.getByRole('button', { name: '停止自动续接', exact: true }).waitFor();
+    assert.equal(await page.getByText(/本轮新增 1 · 更新 2 · 重复 3 · 累计 20/).count(), 1);
+    checks.push('Waiting tasks expose stop automatic resume and distinguish per-attempt counters');
+    await page.getByRole('button', { name: /夹具关键词/ }).click();
+    await page.getByText('本轮访问暂停', { exact: false }).waitFor();
+    await page.getByRole('button', { name: '更晚的事件', exact: true }).click();
+    await page.getByText('本轮后续证据', { exact: false }).waitFor();
+    await page.getByLabel('运行轮次').selectOption('1');
+    await page.getByText('旧轮次已保存', { exact: false }).waitFor();
+    assert.equal(await page.getByRole('link', { name: '导出脱敏诊断' }).getAttribute('href'), '/api/v1/jobs/fixture-job/diagnostics');
+    checks.push('Attempt selector, paginated evidence and sanitized diagnostic download stay tied to the original task');
+    await page.getByRole('button', { name: '停止自动续接', exact: true }).click();
+    await page.getByText('已停止', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: '停止自动续接', exact: true }).count(), 0);
+    checks.push('Stopping a waiting task changes its visible state without creating a replacement task');
     assert.deepEqual(errors, []);
     const directory = path.join(repo, '.cache/architecture-meeting');
     await fs.mkdir(directory, { recursive: true });

@@ -197,7 +197,7 @@ class DouYinCrawler(AbstractCrawler):
                         utils.logger.info(f"[DouYinCrawler.search] Search stopped: {reason}")
                         break
                 except DataFetchError as exc:
-                    crawl_status.record("search", exc.reason, scope=keyword, page=page, response={"http_status": exc.http_status})
+                    crawl_status.record("search", exc.reason, scope=keyword, page=page, response={"http_status": exc.http_status, "retry_after": exc.retry_after})
                     utils.logger.error(f"[DouYinCrawler.search] search douyin keyword: {keyword} failed")
                     break
 
@@ -373,7 +373,7 @@ class DouYinCrawler(AbstractCrawler):
                 utils.logger.info(f"[DouYinCrawler.get_comments] Sleeping for {crawl_interval} seconds after fetching comments for aweme {aweme_id}")
                 utils.logger.info(f"[DouYinCrawler.get_comments] aweme_id: {aweme_id} comments have all been obtained and filtered ...")
             except DataFetchError as e:
-                crawl_status.record("comments", e.reason, scope=aweme_id, response={"http_status": e.http_status})
+                crawl_status.record("comments", e.reason, scope=aweme_id, response={"http_status": e.http_status, "retry_after": e.retry_after})
                 utils.logger.error(f"[DouYinCrawler.get_comments] aweme_id: {aweme_id} get comments failed, error: {e}")
             except Exception:
                 raise

@@ -45,3 +45,17 @@ def test_historical_upgrade_cli_defaults_still_use_the_winforms_baseline(tmp_pat
     assert args.version == "0.3.0"
     assert args.next_version == "0.3.1"
     assert args.old_setup.parent.name == "Media Deep Researcher 0.2.0 Windows安装包"
+
+
+def test_state_recovery_release_requires_both_deployed_baselines_and_a_real_rollback():
+    collector=module_at('packaging/collect_delivery.py')
+    proof={'ok':True,'version':'0.5.0','baseline_version':'0.4.3','next_version':'0.5.1','cleanup_complete':True,
+           'rollback_verified':True,'checks':['full-installer','native-package-update','rollback-uninstall-reinstall'],
+           'limitations':['Synthetic account only'],'directory':'C:/private'}
+    other={**proof,'baseline_version':'0.4.4','rollback_verified':False}
+    public=collector.public_upgrade_matrix(proof,[other],'0.5.0')
+    assert public['baseline_versions']==['0.4.3','0.4.4']
+    assert public['rollback_verified'] is True
+    assert 'C:/private' not in str(public)
+    with pytest.raises(RuntimeError):collector.public_upgrade_matrix(proof,[],'0.5.0')
+    with pytest.raises(RuntimeError):collector.public_upgrade_matrix({**proof,'rollback_verified':False},[other],'0.5.0')

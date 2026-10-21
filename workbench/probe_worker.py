@@ -36,6 +36,15 @@ def classify(capability, response):
             if response["data"]
             else ("unconfirmed", "empty_control")
         )
+    if capability in ("creator", "profile"):
+        from .platform_observation import outcome
+
+        reason = outcome("dy", capability, response)
+        return (
+            ("available", "control_success")
+            if reason in ("source_exhausted", "no_results", "request_succeeded")
+            else ("unconfirmed", reason)
+        )
     return "unconfirmed", "control_not_supported"
 
 
@@ -102,6 +111,10 @@ async def inspect(operation, deadline):
                             control["aweme_id"], control["comment_id"]
                         )
                     )
+                elif capability == "creator":
+                    response = await client.get_user_aweme_posts(control["sec_user_id"])
+                elif capability == "profile":
+                    response = await client.get_user_info(control["sec_user_id"])
                 else:
                     return {**result, "reason": "control_not_supported"}
                 verdict, reason = classify(capability, response)

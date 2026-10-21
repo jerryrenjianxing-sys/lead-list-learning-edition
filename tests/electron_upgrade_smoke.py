@@ -238,6 +238,28 @@ def snapshot(data):
     return {"rows": rows, "files": files}
 
 
+RECOVERY_TABLES = {'job_attempts','attempt_metrics','event_details','operations','collection_scopes','raw_commits',
+                   'access_checks','access_state','access_waits','access_samples','scope_metrics','scope_records','execution_sessions','access_replays'}
+
+
+def preserved(data,before):
+    current=snapshot(data)
+    assert current['files']==before['files'],'Saved accounts or artifact files changed'
+    assert {k:current['rows'][k] for k in before['rows']}==before['rows'],'Existing business rows changed'
+    added=set(current['rows'])-set(before['rows'])
+    assert added<=RECOVERY_TABLES,'Migration created an unrecognized business table'
+    if added:
+        with sqlite3.connect(data/'workbench.sqlite3') as con:
+            assert con.execute('PRAGMA user_version').fetchone()[0]==5
+        backups=list((data/'backups').glob('*.sqlite3'))
+        backed_up=False
+        for path in backups:
+            with sqlite3.connect(path) as con:
+                backed_up |= con.execute('PRAGMA user_version').fetchone()[0]==4
+        assert backed_up,'Schema 4 was not backed up'
+    return current
+
+
 SEED = '''
 import json, sys
 from pathlib import Path
@@ -301,7 +323,7 @@ def verify_new(app, env, data, instance, before, version):
         run_command([app / "runtime/python/python.exe", "-c", VERIFY_SNAPSHOT, data], {**env, "PYTHONPATH": str(app)})
     finally:
         stop_host_or_desktop(app, env, instance, process, log, info, desktop=True)
-    assert snapshot(data) == before, "Opening new desktop changed saved task, account or artifact records"
+    preserved(data,before)
 
 
 def native_apply(install, package, env, directory):
@@ -348,6 +370,9 @@ def execute(args):
                 app = install / "current"
                 assert app_version(app) == args.baseline_version
                 before = seed(app, env, data, instance, args.baseline_version)
+                backup=case/'pre-upgrade-schema4'
+                if args.baseline_version=='0.4.3' and tuple(map(int,args.version.split('.'))) >= (0,5,0):
+                    shutil.copytree(data,backup)
                 if mode == "full-installer":
                     run_command([args.new_setup, "--silent", "--installto", install, "--log", case / "new-setup.log"], env)
                 else:
@@ -366,14 +391,47 @@ def execute(args):
                 verify_new(app, env, data, instance, before, args.version)
                 checks.append(mode + "-" + args.baseline_version + "-to-" + args.version)
                 if mode == "native-package-update" and args.next_package is not None:
+                    migrated=snapshot(data)
                     native_apply(install, args.next_package.resolve(), env, case)
-                    verify_new(app, env, data, instance, before, args.next_version)
+                    verify_new(app, env, data, instance, migrated, args.next_version)
                     checks.append("electron-native-update-to-private-" + args.next_version)
+                if backup.exists():
+                    # Preserve all new-version data before any restore. Use an actual
+                    # uninstall/reinstall; the updater must never silently downgrade.
+                    process,log,info=launch_host_or_desktop(app,env,data,instance)
+                    try:
+                        added=request(info,'POST','/api/v1/datasets',{'name':'new-version-preservation-fixture','records':[{'id':'after-upgrade','text':'keep in sealed new data'}]})
+                    finally:
+                        stop_host_or_desktop(app,env,instance,process,log,info)
+                    sealed=case/'sealed-schema5-with-new-records'
+                    shutil.copytree(data,sealed)
+                    assert snapshot(sealed)['rows']['datasets']!=before['rows']['datasets']
+                    uninstall(install,env,registration)
+                    assert (data/'workbench.sqlite3').is_file(),'Uninstall deleted business data'
+                    # Move only this test-owned directory, preserving it in addition to the seal.
+                    archived=case/'data-before-rollback'
+                    assert data.resolve().parent==case.resolve() and not archived.exists()
+                    data.rename(archived)
+                    shutil.copytree(backup,data)
+                    run_command([args.old_setup,'--silent','--installto',install,'--log',case/'rollback-setup.log'],env)
+                    assert app_version(app)=='0.4.3'
+                    rejected=run_command([app/'runtime/python/python.exe','-c',
+                        'from pathlib import Path;from workbench.database import Database;import sys;\ntry:Database(Path(sys.argv[1]))\nexcept RuntimeError as e:assert "newer" in str(e).lower();print("schema5-rejected")\nelse:raise SystemExit(2)',sealed],
+                        {**env,'PYTHONPATH':str(app)})
+                    process,log,info=launch_host_or_desktop(app,env,data,instance)
+                    try:
+                        assert request(info,'GET','/api/v1/health')['version']=='0.4.3'
+                        run_command([app/'runtime/python/python.exe','-c',VERIFY_SNAPSHOT,data],{**env,'PYTHONPATH':str(app)})
+                    finally:
+                        stop_host_or_desktop(app,env,instance,process,log,info)
+                    assert snapshot(data)==before
+                    assert any('new-version-preservation-fixture' in row for row in snapshot(sealed)['rows']['datasets'])
+                    checks.append(mode+'-uninstall-keep-data-rollback-to-0.4.3-preserves-new-data-separately')
             finally:
                 uninstall(install, env, registration)
                 registration.restore()
                 registration.verify()
-            assert snapshot(data) == before
+            preserved(data,before)
             checks.append(mode + "-uninstall-retains-business-data-and-login-fixture")
     finally:
         registration.restore()
@@ -382,6 +440,7 @@ def execute(args):
         "ok": True, "version": args.version, "baseline_version": args.baseline_version,
         "next_version": args.next_version if args.next_package is not None else None,
         "cleanup_complete": True,
+        'rollback_verified':args.baseline_version=='0.4.3' and tuple(map(int,args.version.split('.'))) >= (0,5,0),
         "checks": checks + ["original-shortcuts-and-registry-restored", "encrypted-synthetic-snapshot-readable", "browser-binding-path-retained", "three-analyses-fifteen-exports-retained"],
         "limitations": ["Synthetic login fixture only; not proof of actual platform authentication", "Current Windows machine, not clean VM", *([] if args.next_package else ["Private next-version package not supplied; Electron-to-next update remains unverified"])],
     }

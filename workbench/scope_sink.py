@@ -1,19 +1,13 @@
 """Fenced structural facts from inherited platform collectors; no response bodies."""
 
-from .database import Conflict
-from .queue import _collector_databases
-from .paths import data_root
-from .database import Database
+from .database import worker_database
 from .recovery import scope_fact
 import json
 import os
 
 
 def persist(item):
-    root = data_root()
-    if str(root) not in _collector_databases:
-        _collector_databases[str(root)] = Database(root)
-    db = _collector_databases[str(root)]
+    db = worker_database()
     with db.lock, db.connect() as con:
         con.execute("BEGIN IMMEDIATE")
         lease = json.loads(os.environ.get("MEDIAWORKBENCH_SESSION", "{}"))
@@ -36,8 +30,7 @@ def persist(item):
 def save_sample(platform, capability, parameters):
     from .database import dump, now
 
-    root = data_root()
-    db = _collector_databases[str(root)]
+    db = worker_database()
     with db.lock, db.connect() as con:
         con.execute("BEGIN IMMEDIATE")
         job_id = os.environ["MEDIAWORKBENCH_JOB_ID"]

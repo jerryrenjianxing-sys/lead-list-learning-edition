@@ -20,7 +20,16 @@ def valid_session(con, job_id, attempt):
 
 
 def worker_job(con, job_id, attempt, lease, platform=None):
-    canonical = {'douyin':'dy','xhs':'xhs','xiaohongshu':'xhs','kuaishou':'ks','bilibili':'bili','weibo':'wb','tieba':'tieba','zhihu':'zhihu'}.get(platform,platform)
+    canonical = {
+        "douyin": "dy",
+        "xhs": "xhs",
+        "xiaohongshu": "xhs",
+        "kuaishou": "ks",
+        "bilibili": "bili",
+        "weibo": "wb",
+        "tieba": "tieba",
+        "zhihu": "zhihu",
+    }.get(platform, platform)
     job = con.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
     if (
         not job

@@ -285,3 +285,15 @@ def record_view(row):
         "revision": row["revision"],
         "payload": json.loads(row["payload"]),
     }
+
+
+_worker_databases = {}
+
+
+def worker_database():
+    """One process-local storage entry; no open connections survive a call."""
+    from .paths import data_root
+    root=data_root()
+    if str(root) not in _worker_databases:
+        _worker_databases[str(root)]=Database(root)
+    return _worker_databases[str(root)]
