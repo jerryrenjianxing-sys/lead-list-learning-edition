@@ -419,7 +419,7 @@ class Queue:
             state = "partial" if count else "failed"
         elif collection and collection["issues"] and job["options"]["crawler_type"] != "login":
             state = "partial" if count else "interrupted"
-            reason = crawl_status.MESSAGES[collection["issues"][0]["reason"]]
+            reason = collection["message"]
         elif not collection and unconfirmed and job["options"]["crawler_type"] != "login":
             state, reason = ("partial" if count else "interrupted"), unconfirmed[-1]
         elif errors and job["options"]["crawler_type"] != "login":

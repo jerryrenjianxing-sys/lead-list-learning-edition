@@ -152,19 +152,18 @@ class DouYinCrawler(AbstractCrawler):
         utils.logger.info("[DouYinCrawler.search] Begin search douyin keywords")
         dy_limit_count = 10  # douyin limit page fixed value
         crawl_limit = config.CRAWLER_MAX_NOTES_COUNT
-        if 0 < crawl_limit < dy_limit_count:
-            crawl_limit = dy_limit_count
         start_page = config.START_PAGE  # start page number
         for keyword in config.KEYWORDS.split(","):
             crawl_status.record("search", "started", scope=keyword)
             source_keyword_var.set(keyword)
             utils.logger.info(f"[DouYinCrawler.search] Current keyword: {keyword}")
             aweme_list: List[str] = []
+            collected_ids = set()
             seen_page_ids = set()
             page = 0
             dy_search_id = ""
             while not utils.crawl_limit_reached(
-                (page - start_page + 1) * dy_limit_count - 1,
+                len(collected_ids),
                 crawl_limit,
             ):
                 if page < start_page:
@@ -203,9 +202,6 @@ class DouYinCrawler(AbstractCrawler):
                     break
 
                 page += 1
-                if "data" not in posts_res:
-                    utils.logger.error(f"[DouYinCrawler.search] search douyin keyword: {keyword} failed，账号也许被风控了。")
-                    break
                 dy_search_id = posts_res.get("extra", {}).get("logid", "")
                 page_aweme_items = []
                 for post_item in posts_res.get("data"):
@@ -224,9 +220,17 @@ class DouYinCrawler(AbstractCrawler):
                         f"[DouYinCrawler.search] Repeated page for keyword:{keyword}, page:{page - 1}; stopping pagination"
                     )
                     break
+                collected_page_ids = []
                 for aweme_info in page_aweme_items:
-                    aweme_list.append(str(aweme_info.get("aweme_id") or ""))
+                    aweme_id = str(aweme_info.get("aweme_id") or "")
+                    if not aweme_id or aweme_id in collected_ids:
+                        continue
+                    if utils.crawl_limit_reached(len(collected_ids), crawl_limit):
+                        break
                     await douyin_store.update_douyin_aweme(aweme_item=aweme_info)
+                    collected_ids.add(aweme_id)
+                    aweme_list.append(aweme_id)
+                    collected_page_ids.append(aweme_id)
                     await self.download_media(aweme_item=aweme_info)
                     if self.lead_sink:
                         try:
@@ -242,7 +246,10 @@ class DouYinCrawler(AbstractCrawler):
                             )
                 
                 # Batch get note comments for the current page
-                await self.batch_get_note_comments(page_aweme_list)
+                await self.batch_get_note_comments(collected_page_ids)
+                if utils.crawl_limit_reached(len(collected_ids), crawl_limit):
+                    crawl_status.record("search", "limit_reached", scope=keyword, page=page - 1, response=posts_res)
+                    break
                 if posts_res.get("has_more") in (0, False, "0"):
                     crawl_status.record("search", "source_exhausted", scope=keyword, page=page - 1, response=posts_res)
                     break

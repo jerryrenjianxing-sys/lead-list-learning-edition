@@ -84,6 +84,27 @@ def test_successful_platform_response_with_no_next_page_reports_no_results(tmp_p
     assert job["checkpoint"]["collection"]["stops"][0]["reason"] == "no_results"
 
 
+def test_short_search_page_does_not_count_as_the_requested_record_limit(tmp_path):
+    job = crawl_search(tmp_path, {"limit": 10, "responses": [
+        {"data": [{"aweme_info": {"aweme_id": "v1", "author": {}}}], "has_more": 1},
+        {"data": [{"aweme_info": {"aweme_id": "v2", "author": {}}}], "has_more": 0},
+    ]})
+    assert job["state"] == "completed", job
+    assert job["checkpoint"]["saved_records"] == 2
+    assert job["checkpoint"]["collection"]["stops"][0]["reason"] == "source_exhausted"
+
+
+def test_requested_search_count_caps_saved_contents_without_counting_duplicates(tmp_path):
+    video = lambda video_id: {"aweme_info": {"aweme_id": video_id, "author": {}}}
+    job = crawl_search(tmp_path, {"limit": 2, "responses": [
+        {"data": [video("v1"), video("v1")], "has_more": 1},
+        {"data": [video("v1"), video("v2"), video("v3")], "has_more": 1},
+    ]})
+    assert job["state"] == "completed", job
+    assert job["checkpoint"]["saved_records"] == 2
+    assert job["checkpoint"]["collection"]["stops"][0]["reason"] == "limit_reached"
+
+
 @pytest.mark.parametrize("repeat", [False, True])
 def test_saved_search_data_is_partial_when_pagination_is_unconfirmed(tmp_path, repeat):
     first = {"data": [{"aweme_info": {"aweme_id": "v1", "author": {}}}]}

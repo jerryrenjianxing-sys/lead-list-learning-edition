@@ -5,6 +5,32 @@ import RuntimeChecks from "./RuntimeChecks";
 import { pageResources, useWorkspaceResources, type ResourceStatus, type WorkspaceResource } from "./workspace-loader";
 import "./workbench.css";
 type Item = Record<string, any>;
+type CollectionOutcome = {
+  stage: string;
+  reason: string;
+  scope?: string;
+  page?: number;
+  response?: Record<string, number | boolean | string>;
+};
+type CollectionStatus = {
+  complete: boolean;
+  empty: boolean;
+  issue_count: number;
+  issues: CollectionOutcome[];
+  stops: CollectionOutcome[];
+  message: string;
+};
+type Job = {
+  id: string;
+  platform: string;
+  state: string;
+  options: { crawler_type: string; keywords?: string };
+  checkpoint?: { collection?: CollectionStatus };
+  created: string;
+  attempt: number;
+  dataset_id: string | null;
+  error?: string | null;
+};
 const platforms = [
   ["xhs", "小红书"],
   ["dy", "抖音"],
@@ -44,7 +70,7 @@ function Status({ value }: { value: string }) {
     <span className={`wb-status state-${value}`}>{labels[value] || value}</span>
   );
 }
-function jobStatus(job: Item): string {
+function jobStatus(job: Job): string {
   if (job.state === "running" && job.options.crawler_type === "login") return "logging_in";
   if (job.state === "completed" && job.checkpoint?.collection?.empty) return "no_results";
   return job.state;
@@ -64,7 +90,7 @@ export default function Workbench() {
     [error, E] = useState(""),
     [busy, B] = useState(false),
     [notice, N] = useState("");
-  const [jobs, J] = useState<Item[]>([]),
+  const [jobs, J] = useState<Job[]>([]),
     [datasets, D] = useState<Item[]>([]),
     [analyses, A] = useState<Item[]>([]),
     [artifacts, F] = useState<Item[]>([]),
@@ -100,7 +126,7 @@ export default function Workbench() {
   const browserEdited = useRef(false);
   const browserRevision = useRef(0);
   const { states: sectionStates, refresh: readSections } = useWorkspaceResources((key, value) => {
-    if (key === "jobs") { J(value.items || []); AC(value.archived_count || 0); }
+    if (key === "jobs") { J((value.items || []) as Job[]); AC(value.archived_count || 0); }
     else if (key === "datasets") D(value.items || []);
     else if (key === "analyses") A(value.items || []);
     else if (key === "artifacts") F(value.items || []);
@@ -604,8 +630,8 @@ export default function Workbench() {
                     <small>
                       {date(j.created)} · 第 {j.attempt} 次运行
                     </small>
-                    {(j.checkpoint?.collection?.empty || j.checkpoint?.collection?.issues?.length > 0) && (
-                      <small>{j.checkpoint.collection.message}</small>
+                    {(j.checkpoint?.collection?.empty || (j.checkpoint?.collection?.issues?.length ?? 0) > 0) && (
+                      <small>{j.checkpoint?.collection?.message}</small>
                     )}
                   </button>
                   <Status value={jobStatus(j)} />
@@ -644,7 +670,7 @@ export default function Workbench() {
                   )}
                   <button
                     disabled={!j.dataset_id}
-                    onClick={() => void perform(() => showData(j.dataset_id))}
+                    onClick={() => { const id = j.dataset_id; if (id) void perform(() => showData(id)); }}
                   >
                     数据
                   </button>
