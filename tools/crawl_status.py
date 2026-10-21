@@ -28,6 +28,9 @@ class CollectionStatus(TypedDict):
 
 
 MESSAGES = {
+    'restriction_explicit': '平台明确要求降低访问频率，已暂停并进入冷却；重新登录不会清空等待时间。',
+    'request_succeeded': '已读取一页，当前范围尚未确认结束。',
+    'interface_changed': '平台接口结构或签名要求发生变化，需要检查适配。',
     "platform_error": "平台返回业务错误，当前采集未完成；可查看详情后重试。",
     "empty_unconfirmed": "平台返回空列表，尚未确认无结果或访问受限；可查看详情后重试。",
     "response_unconfirmed": "平台响应结构不完整，尚未确认采集结果；可查看详情后重试。",
@@ -47,7 +50,7 @@ def response_summary(response: object) -> dict[str, int | bool | str]:
     if not isinstance(response, dict):
         return {"response_type": type(response).__name__}
     summary = {}
-    for key in ("http_status", "status_code", "has_more", "cursor"):
+    for key in ("http_status", "status_code", "has_more", "cursor", "retry_after"):
         value = response.get(key)
         if isinstance(value, (int, bool)) or (
             isinstance(value, str) and value.isdigit() and len(value) <= 20
@@ -74,6 +77,9 @@ def record(stage: str, reason: str, *, scope: str = "", page: int | None = None,
         item["page"] = page
     if response is not None:
         item["response"] = response_summary(response)
+    if os.environ.get('MEDIAWORKBENCH_DATA_DIR'):
+        from workbench.scope_sink import persist
+        item['reason']=persist(item)
     with (Path(directory) / f"collection-{attempt}.jsonl").open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(item, ensure_ascii=False) + "\n")
 
@@ -101,7 +107,7 @@ def read(directory: Path | str, job_id: str, attempt: int) -> CollectionStatus |
                     if isinstance(item.get("page"), int):
                         outcome["page"] = item["page"]
                     if isinstance(item.get("response"), dict):
-                        allowed = {"http_status", "status_code", "has_more", "cursor", "data_present", "comments_present", "data_count", "comments_count", "response_type"}
+                        allowed = {"http_status", "status_code", "has_more", "cursor", "retry_after", "data_present", "comments_present", "data_count", "comments_count", "response_type"}
                         outcome["response"] = {
                             key: value for key, value in item["response"].items()
                             if key in allowed and (

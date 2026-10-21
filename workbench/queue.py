@@ -13,8 +13,9 @@ from .database import Conflict, Missing, dump, uid, now, insert_records
 from .paths import ROOT
 from .auth import active_login, update as auth_update, finish_progress
 from tools import crawl_status
+from . import recovery
 
-TERMINAL = {"completed", "partial", "failed", "cancelled", "interrupted", "needs_login"}
+TERMINAL = {"completed", "partial", "failed", "cancelled", "interrupted", "needs_login", "waiting_access"}
 PLATFORMS = {
     "xhs": "小红书",
     "dy": "抖音",
@@ -26,12 +27,14 @@ PLATFORMS = {
 }
 
 
-def job_view(row):
+def job_view(row, db=None):
     result = dict(row)
     result["options"] = json.loads(result["options"])
     result["options"].pop("enable_media", None)
     result["options"]["has_cookie"] = bool(result["options"].pop("cookies", ""))
     result["checkpoint"] = json.loads(result["checkpoint"])
+    if db is not None:
+        result['status_detail'] = recovery.Recovery(db).explain(result)
     return result
 
 
@@ -49,6 +52,7 @@ def create_job(con, options):
                 "state": existing["state"],
                 "dataset_id": existing["dataset_id"],
                 "reused": True,
+                "operation_id": recovery.session_operation(con, existing['id']),
             }
     if options.get("cookies"):
         from .credentials import seal
@@ -84,7 +88,10 @@ def create_job(con, options):
             "INSERT INTO login_progress VALUES(?,0,'queued',?,?,'',0)",
             (identity, stamp, stamp),
         )
-    return {"id": identity, "state": "queued", "dataset_id": dataset_id}
+    result = {"id": identity, "state": "queued", "dataset_id": dataset_id}
+    if options['crawler_type'] == 'login':
+        result['operation_id'] = recovery.session_operation(con, identity)
+    return result
 
 
 def control(con, job_id, action):
@@ -93,10 +100,13 @@ def control(con, job_id, action):
         raise Missing(job_id)
     if action == "stop":
         con.execute("UPDATE auth_pauses SET enabled=0 WHERE job_id=?", (job_id,))
+        con.execute("UPDATE access_waits SET enabled=0 WHERE job_id=?",(job_id,))
+        con.execute("UPDATE operations SET state=CASE WHEN state='running' THEN 'cancelling' ELSE 'cancelled' END,updated=?,result=? WHERE id IN (SELECT operation_id FROM access_checks WHERE source_job=?) AND state IN ('accepted','running')",
+                    (now(),dump({'reason_code':'source_task_stopped','next_actions':['inspect_status'],'attempted':False}),job_id))
         state = (
             "stopping"
             if row["state"] in ("running", "stopping")
-            else ("cancelled" if row["state"] == "queued" else row["state"])
+            else ("completed" if row["state"] == "completed" else "cancelled")
         )
     else:
         if json.loads(row["options"])["crawler_type"] == "login":
@@ -113,6 +123,13 @@ def control(con, job_id, action):
             )
         state = "queued"
         con.execute("UPDATE auth_pauses SET enabled=0 WHERE job_id=?", (job_id,))
+        # Explicit resume does not bypass an unresolved capability block.
+        from .availability import Availability
+        account = Availability._session(con,row['platform'])['account_id'] or ''
+        blocked = con.execute("SELECT 1 FROM access_waits w JOIN access_state s ON s.platform=? AND s.account_id=w.account_id AND s.capability=w.capability WHERE w.job_id=? AND w.account_id=? AND s.state IN ('restricted','suspected_restriction','manual_action')",(row['platform'],job_id,account)).fetchone()
+        if blocked and row['platform']=='dy':
+            raise Conflict('对应平台能力尚未恢复，请查看状态并等待复查；重新登录不会清除冷却。')
+        con.execute('UPDATE access_waits SET enabled=0 WHERE job_id=?',(job_id,))
         options = json.loads(row["options"])
         options.pop("enable_media", None)
         con.execute("UPDATE jobs SET options=? WHERE id=?", (dump(options), job_id))
@@ -121,11 +138,15 @@ def control(con, job_id, action):
         "UPDATE jobs SET state=?,updated=?,error=NULL WHERE id=?",
         (state, now(), job_id),
     )
+    if state == 'cancelled':
+        con.execute("UPDATE operations SET state='cancelled',updated=?,result=? WHERE job_id=? AND state IN ('accepted','running')",
+                    (now(), dump({'reason_code':'user_stopped','next_actions':['retry']}),job_id))
     if state == "cancelled" and row["state"] == "queued":
         con.execute(
             "UPDATE login_progress SET phase='cancelled',reason='cancelled',updated=? WHERE job_id=? AND attempt=? AND phase='queued'",
             (now(), job_id, row["attempt"]),
         )
+    recovery.event(con,job_id,row['attempt'],'User requested '+action,source='user',kind='control',details={'action':action,'state':state})
     return {"id": job_id, "state": state}
 
 
@@ -137,6 +158,9 @@ def clear_history(con, ids=None, *, restore=False):
             "DELETE FROM job_history_archive WHERE job_id=?", [(id,) for id in selected]
         )
     else:
+        resumable={r[0] for r in con.execute("SELECT j.id FROM jobs j WHERE j.state IN ('needs_login','waiting_access') AND (EXISTS(SELECT 1 FROM auth_pauses p WHERE p.job_id=j.id AND p.enabled=1) OR EXISTS(SELECT 1 FROM access_waits w WHERE w.job_id=j.id AND w.enabled=1))")}
+        if ids is not None and resumable.intersection(ids):
+            raise Conflict('任务仍在等待自动续接，请先停止自动续接再清理记录。')
         rows = con.execute(
             "SELECT id,state FROM jobs WHERE id NOT IN (SELECT job_id FROM job_history_archive)"
         ).fetchall()
@@ -150,7 +174,7 @@ def clear_history(con, ids=None, *, restore=False):
         selected = [
             r["id"]
             for r in rows
-            if r["state"] in TERMINAL and (ids is None or r["id"] in ids)
+            if r["state"] in TERMINAL and r['id'] not in resumable and (ids is None or r["id"] in ids)
         ]
         con.executemany(
             "INSERT INTO job_history_archive VALUES(?,?)",
@@ -182,17 +206,21 @@ def kill_tree(pid, created=None):
 
 
 class Queue:
-    def __init__(self, db, worker_command=None, sessions=None):
+    def __init__(self, db, worker_command=None, sessions=None, *, availability=None, probe_command=None):
         self.db = db
         self.stop_event = threading.Event()
         self.thread = None
         self.process = None
         self.sessions = sessions
+        from .availability import Availability
+        self.availability = availability or Availability(db)
+        self.probe_command = probe_command
         self.worker_command = worker_command or (
             lambda job_id: [sys.executable, "-m", "workbench.worker", job_id]
         )
 
     def start(self):
+        self.availability.recover()
         # A worker from a crashed host must be reaped before the next browser session.
         for job in self.db.query(
             "SELECT * FROM jobs WHERE state IN ('running','stopping')"
@@ -204,14 +232,11 @@ class Queue:
                         kill_tree(job["pid"], job["process_created"])
                 except psutil.Error:
                     pass
-            self.db.execute(
-                "UPDATE jobs SET state='interrupted',pid=NULL,error=?,updated=? WHERE id=?",
-                (
-                    "Previous host stopped. Saved records are available; resume explicitly.",
-                    now(),
-                    job["id"],
-                ),
-            )
+            with self.db.lock,self.db.connect() as con:
+                con.execute('BEGIN IMMEDIATE')
+                recovery.finish(con,job,'interrupted',json.loads(job['checkpoint']),
+                                'Previous host stopped. Saved records are available; resume explicitly.')
+                con.commit()
             finish_progress(self.db, job["id"], "interrupted")
         self.thread = threading.Thread(
             target=self._loop, name="workbench-queue", daemon=True
@@ -230,9 +255,19 @@ class Queue:
     def _claim(self):
         with self.db.lock, self.db.connect() as con:
             con.execute("BEGIN IMMEDIATE")
+            if not self.db.accept_writes:
+                return None
             row = con.execute(
                 "SELECT * FROM jobs WHERE state='queued' ORDER BY (json_extract(options,'$.crawler_type')='login') DESC,created,id LIMIT 1"
             ).fetchone()
+            while row and json.loads(row['options'])['crawler_type']!='login':
+                account=self.availability._session(con,row['platform'])['account_id'] or ''
+                blocks=con.execute("SELECT capability,reason FROM access_state WHERE platform=? AND account_id=? AND state IN ('restricted','suspected_restriction','manual_action')",(row['platform'],account)).fetchall()
+                if not blocks or row['platform']!='dy':break
+                for block in blocks:
+                    self.availability.pause(con,dict(row)|{'options':json.loads(row['options'])},block['capability'],'existing_block')
+                con.execute("UPDATE jobs SET state='waiting_access',updated=? WHERE id=?",(now(),row['id']))
+                row=con.execute("SELECT * FROM jobs WHERE state='queued' ORDER BY (json_extract(options,'$.crawler_type')='login') DESC,created,id LIMIT 1").fetchone()
             if row:
                 options = json.loads(row["options"])
                 options.pop("enable_media", None)
@@ -240,6 +275,11 @@ class Queue:
                     "UPDATE jobs SET state='running',attempt=attempt+1,options=?,updated=? WHERE id=?",
                     (dump(options), now(), row["id"]),
                 )
+                con.execute("INSERT INTO job_attempts(job_id,attempt,state,started) VALUES(?,?,'running',?)",
+                            (row['id'], row['attempt'] + 1, now()))
+                recovery.plan_scopes(con,row,row['attempt']+1)
+                con.execute("UPDATE operations SET state='running',attempt=?,updated=? WHERE job_id=? AND state='accepted'",
+                            (row['attempt']+1,now(),row['id']))
             con.commit()
             if row:
                 result = job_view(row)
@@ -250,6 +290,13 @@ class Queue:
 
     def _loop(self):
         while not self.stop_event.is_set():
+            self.availability.schedule_due()
+            operation = self.availability.claim()
+            if operation:
+                from .probe_runner import run_probe
+                result = run_probe(self.db,operation,self.stop_event,self.sessions,self.probe_command)
+                self.availability.complete(operation,result)
+                continue
             job = self._claim()
             if not job:
                 if self.sessions and self.sessions.thread:
@@ -275,11 +322,11 @@ class Queue:
                     if self.stop_event.is_set()
                     else "failed"
                 )
-                self.db.execute(
-                    "UPDATE jobs SET state=?,error=?,pid=NULL,updated=? WHERE id=?",
-                    (state, str(exc), now(), job["id"]),
-                )
-                self.db.event(job["id"], str(exc), "error")
+                with self.db.lock, self.db.connect() as con:
+                    con.execute('BEGIN IMMEDIATE')
+                    recovery.finish(con, job, state, json.loads(current['checkpoint']), str(exc))
+                    con.commit()
+                self.db.event(job["id"], str(exc), "error", attempt=job['attempt'], source='browser')
                 finish_progress(
                     self.db,
                     job["id"],
@@ -315,6 +362,7 @@ class Queue:
             "PYTHONPATH": str(ROOT),
             "MEDIAWORKBENCH_DATA_DIR": str(self.db.root),
             "MEDIAWORKBENCH_ATTEMPT": str(job["attempt"]),
+            "MEDIAWORKBENCH_LOGIN_DIR": str(directory),
         }
         if job.get("_session"):
             env.update(
@@ -323,7 +371,9 @@ class Queue:
                 MEDIAWORKBENCH_WORKER_TOKEN=self.sessions.token,
             )
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-        with (directory / "worker.log").open("a", encoding="utf-8") as log:
+        attempt_dir=directory/'attempts'/str(job['attempt'])
+        attempt_dir.mkdir(parents=True,exist_ok=True)
+        with (attempt_dir / "worker.log").open("a", encoding="utf-8") as log:
             process = subprocess.Popen(
                 self.worker_command(job["id"]),
                 cwd=ROOT,
@@ -345,12 +395,8 @@ class Queue:
 
             def read_output():
                 for line in process.stdout:
-                    line = re.sub(r"\x1b\[[0-9;]*m", "", line).strip()
-                    line = re.sub(
-                        r"(?i)(cookie|authorization)(\s*[:=]\s*)[^\r\n]+",
-                        r"\1\2[redacted]",
-                        line,
-                    )
+                    from .redaction import sanitize
+                    line = sanitize(line)
                     if not line:
                         continue
                     log.write(line + "\n")
@@ -367,7 +413,7 @@ class Queue:
                             unconfirmed.append("搜索返回空列表，尚未确认结果；可查看详情后重试。")
                         elif "Repeated page for keyword:" in line:
                             unconfirmed.append("搜索分页重复，已停止翻页以避免循环；采集尚未确认完整。")
-                    self.db.event(job["id"], line, level)
+                    self.db.event(job["id"], line, level, attempt=job['attempt'])
 
             reader = threading.Thread(target=read_output, daemon=True)
             reader.start()
@@ -478,15 +524,18 @@ class Queue:
         }
         if collection:
             checkpoint["collection"] = collection
-        self.db.execute(
-            "UPDATE jobs SET state=?,pid=NULL,error=?,checkpoint=?,updated=? WHERE id=?",
-            (state, reason, dump(checkpoint), now(), job["id"]),
-        )
-        self.db.event(
-            job["id"],
-            f"Task {state}; {count} distinct records saved.",
-            "error" if state == "failed" else "info",
-        )
+        with self.db.lock, self.db.connect() as con:
+            con.execute('BEGIN IMMEDIATE')
+            current = con.execute('SELECT state,attempt FROM jobs WHERE id=?',(job['id'],)).fetchone()
+            if (current['state']=='running' and current['attempt']==job['attempt'] and state not in ('cancelled','needs_login')
+                    and collection and job['platform']=='dy' and job['options']['crawler_type']!='login'):
+                from .availability import AMBIGUOUS_REASONS
+                for issue in collection['issues']:
+                    if issue['stage'] in ('search','detail','creator','comments','replies','profile') and issue['reason'] in AMBIGUOUS_REASONS | {'restriction_explicit'}:
+                        self.availability.pause(con,job,issue['stage'],issue['reason'],issue.get('response',{}).get('retry_after',0))
+                        state='waiting_access'
+            recovery.finish(con, job, state, checkpoint, reason)
+            con.commit()
 
 
 _collector_databases = {}
@@ -503,10 +552,21 @@ def collect_record(item, kind, platform, source_id=None, source_url=""):
     if str(root) not in _collector_databases:
         _collector_databases[str(root)] = Database(root)
     db = _collector_databases[str(root)]
-    job = db.one("jobs", job_id)
     with db.lock, db.connect() as con:
         con.execute("BEGIN IMMEDIATE")
-        insert_records(
+        job = con.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
+        attempt = os.environ.get('MEDIAWORKBENCH_ATTEMPT', '')
+        lease = json.loads(os.environ.get('MEDIAWORKBENCH_SESSION', '{}'))
+        from .ownership import worker_job
+        try:
+            job=worker_job(con,job_id,attempt,lease,platform)
+        except Conflict:
+            if job:
+                recovery.event(con, job_id, int(attempt) if attempt.isdigit() else None,
+                               'Late or stopped worker write rejected', source='storage', kind='stale_write')
+                con.commit()
+            raise Conflict('This task attempt no longer owns record writes')
+        saved = insert_records(
             con,
             job["dataset_id"],
             [
@@ -521,4 +581,25 @@ def collect_record(item, kind, platform, source_id=None, source_url=""):
             platform=platform,
             kind=kind,
         )
+        con.execute('INSERT INTO attempt_metrics VALUES(?,?,1,?,?,?) ON CONFLICT(job_id,attempt) DO UPDATE SET received=received+1,inserted=inserted+excluded.inserted,updated=updated+excluded.updated,unchanged=unchanged+excluded.unchanged',
+                    (job_id,int(attempt),saved['inserted'],saved['updated'],saved['unchanged']))
+        recovery.event(con,job_id,int(attempt),'Record committed',source='storage',kind='record_committed',
+                       capability='comments' if 'comment' in kind else 'detail',details=saved)
+        record_id = saved['record_ids'][0]
+        from .platform_observation import current_scope
+        active_scope=current_scope.get()
+        if active_scope:
+            capability,scope=active_scope
+            con.execute('INSERT INTO scope_records VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING',(job_id,int(attempt),capability,scope,record_id))
+            con.execute('INSERT INTO scope_metrics VALUES(?,?,?,?,1,?,?,?) ON CONFLICT(job_id,attempt,capability,scope) DO UPDATE SET received=received+1,inserted=inserted+excluded.inserted,updated=updated+excluded.updated,unchanged=unchanged+excluded.unchanged',
+                        (job_id,int(attempt),capability,scope,saved['inserted'],saved['updated'],saved['unchanged']))
+            options=json.loads(job['options'])
+            limit=options['max_comments_count'] if capability in ('comments','replies') else options['max_notes_count'] if capability in ('search','creator') else 0
+            count=con.execute('SELECT count(*) FROM scope_records WHERE job_id=? AND attempt=? AND capability=? AND scope=?',(job_id,int(attempt),capability,scope)).fetchone()[0]
+            if limit and count>=limit:
+                recovery.scope_fact(con,job_id,int(attempt),capability,scope,'limit_reached',{'committed_records':count})
+        revision = con.execute('SELECT revision FROM records WHERE id=?',(record_id,)).fetchone()[0]
+        con.execute("INSERT INTO raw_commits VALUES(?,?,?,?,'pending',?) ON CONFLICT DO NOTHING",
+                    (job_id,int(attempt),record_id,revision,now()))
         con.commit()
+        return {'record_id':record_id,'revision':revision,'job_id':job_id,'attempt':int(attempt)}

@@ -55,6 +55,8 @@ def _extract_pinned_comments(value: Any) -> List[Dict]:
     return []
 
 
+from workbench.platform_observation import observed
+
 class BilibiliClient(AbstractApiClient, ProxyRefreshMixin):
 
     def __init__(
@@ -165,6 +167,7 @@ class BilibiliClient(AbstractApiClient, ProxyRefreshMixin):
         self.headers["Cookie"] = cookie_str
         self.cookie_dict = cookie_dict
 
+    @observed('bili','search')
     async def search_video_by_keyword(
         self,
         keyword: str,
@@ -196,6 +199,7 @@ class BilibiliClient(AbstractApiClient, ProxyRefreshMixin):
         }
         return await self.get(uri, post_data)
 
+    @observed('bili','detail')
     async def get_video_info(self, aid: Union[int, None] = None, bvid: Union[str, None] = None) -> Dict:
         """
         Bilibli web video detail api, choose one parameter between aid and bvid
@@ -238,6 +242,7 @@ class BilibiliClient(AbstractApiClient, ProxyRefreshMixin):
 
         return await self.get(uri, params, enable_params_sign=True)
 
+    @observed('bili','comments')
     async def get_video_comments(
         self,
         video_id: str,
@@ -409,6 +414,7 @@ class BilibiliClient(AbstractApiClient, ProxyRefreshMixin):
 
             pn += 1
 
+    @observed('bili','replies')
     async def get_video_level_two_comments(
         self,
         video_id: str,
@@ -436,6 +442,7 @@ class BilibiliClient(AbstractApiClient, ProxyRefreshMixin):
         result = await self.get(uri, post_data)
         return result
 
+    @observed('bili','creator')
     async def get_creator_videos(self, creator_id: str, pn: int, ps: int = 30, order_mode: SearchOrderType = SearchOrderType.LAST_PUBLISH) -> Dict:
         """get all videos for a creator
         :param creator_id: Creator ID
@@ -454,6 +461,7 @@ class BilibiliClient(AbstractApiClient, ProxyRefreshMixin):
         }
         return await self.get(uri, post_data)
 
+    @observed('bili','profile')
     async def get_creator_info(self, creator_id: int) -> Dict:
         """
         get creator info

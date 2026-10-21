@@ -222,7 +222,10 @@ class SessionStore:
                 "SELECT p.job_id FROM auth_pauses p JOIN jobs j ON j.id=p.job_id WHERE p.platform=? AND p.account_id=? AND p.enabled=1 AND j.state='needs_login' AND p.generation<? AND COALESCE(p.resumed_generation,-1)<?",
                 (platform, row["account_id"], row["generation"], row["generation"]),
             ).fetchall()
+            resumed=[]
             for job in jobs:
+                if con.execute("SELECT 1 FROM access_waits w LEFT JOIN access_state s ON s.platform=? AND s.account_id=w.account_id AND s.capability=w.capability WHERE w.job_id=? AND w.enabled=1 AND COALESCE(s.state,'unknown')<>'available'",(platform,job[0])).fetchone():
+                    continue
                 con.execute(
                     "UPDATE jobs SET state='queued',error=NULL,updated=? WHERE id=?",
                     (now(), job[0]),
@@ -232,5 +235,6 @@ class SessionStore:
                     (row["generation"], job[0]),
                 )
                 con.execute("DELETE FROM job_history_archive WHERE job_id=?", (job[0],))
+                resumed.append(job[0])
             con.commit()
-        return [j[0] for j in jobs]
+        return resumed

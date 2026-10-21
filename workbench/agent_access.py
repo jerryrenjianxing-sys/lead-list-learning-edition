@@ -61,7 +61,7 @@ class AgentAccess:
                  "media": False, "live_validation": "pending"}
                 for p, name in PLATFORMS.items()
             ],
-            "operations": ["jobs", "datasets", "analyses", "artifacts", "settings", "diagnostics", "self_test", "imports"],
+            "operations": ["jobs", "datasets", "analyses", "artifacts", "settings", "diagnostics", "self_test", "imports", "explain", "probe", "operation"],
             "analysis": "user_defined", "exports": ["csv", "json", "xlsx", "docx", "md"],
             "openapi": "/openapi.json",
             "agent_compatibility": {"codex": "fresh_agent_validation_pending", "hermes": "fresh_agent_validation_pending"},

@@ -21,4 +21,8 @@ def command(action, **values):
         },
     )
     with urllib.request.urlopen(request, timeout=45) as response:
-        return json.load(response)
+        result = json.load(response)
+    if result.get('saved') and 'generation' in result:
+        session['generation']=result['generation']
+        os.environ['MEDIAWORKBENCH_SESSION']=json.dumps(session)
+    return result

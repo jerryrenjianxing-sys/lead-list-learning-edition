@@ -78,16 +78,19 @@ class SessionManager:
         if not self.ready.wait(5):
             raise RuntimeError("浏览器管理器启动超时，请重试。")
 
-    def call(self, operation, **kwargs):
+    def call(self, operation, *, timeout=100, **kwargs):
         self._start()
 
         async def serialized():
             async with self.lock:
                 return await getattr(self, "_" + operation)(**kwargs)
 
-        return asyncio.run_coroutine_threadsafe(serialized(), self.loop).result(
-            timeout=100
-        )
+        future = asyncio.run_coroutine_threadsafe(serialized(), self.loop)
+        try:
+            return future.result(timeout=timeout)
+        except TimeoutError:
+            future.cancel()
+            raise
 
     def close(self):
         if not self.thread:
@@ -103,6 +106,12 @@ class SessionManager:
     def _validate(self, lease, *, ending=False):
         if not self.lease or not secrets.compare_digest(lease, self.lease["lease"]):
             raise Conflict("This browser lease has ended")
+        if self.lease.get('operation_id'):
+            operation = self.db.one('operations',self.lease['operation_id'])
+            if (not ending and operation['state'] != 'running'
+                    or self.store.get(operation['platform'])['generation'] != self.lease['generation']):
+                raise Conflict('This probe no longer owns the browser')
+            return operation
         job = self.db.one("jobs", self.lease["job_id"])
         if self.store.get(job["platform"])["generation"] != self.lease["generation"]:
             raise Conflict("The account session has changed")
@@ -118,23 +127,7 @@ class SessionManager:
         current = self.db.one("jobs", job["id"])
         if current["state"] != "running" or current["attempt"] != job["attempt"]:
             raise Conflict("Task was stopped before browser startup")
-        if (
-            self.platform != job["platform"]
-            or not self.browser
-            or not self.browser.is_connected()
-        ):
-            await self._close_browser()
-            for attempt in range(2):
-                try:
-                    await self._launch(job["platform"])
-                    break
-                except Conflict:
-                    raise
-                except Exception:
-                    await self._close_browser()
-                    if attempt:
-                        raise
-                    await asyncio.sleep(1)
+        await self._ensure_browser(job['platform'])
         options = job["options"]
         self.lease = {
             "lease": secrets.token_urlsafe(32),
@@ -144,6 +137,9 @@ class SessionManager:
             "endpoint": self.endpoint,
         }
         self.last_used = time.monotonic()
+        from .ownership import lease_hash
+        self.db.execute('INSERT OR REPLACE INTO execution_sessions VALUES(?,?,?,?,?)',
+                        (job['id'],job['attempt'],self.lease['generation'],self.store.get(job['platform'])['account_id'],lease_hash(self.lease['lease'])))
         try:
             self._validate(self.lease["lease"])
         except Conflict:
@@ -152,6 +148,55 @@ class SessionManager:
         if options.get("session_action") == "open":
             window_visibility(self.process.pid, True)
         return dict(self.lease)
+
+    async def _ensure_browser(self, platform):
+        if (
+            self.platform != platform
+            or not self.browser
+            or not self.browser.is_connected()
+        ):
+            await self._close_browser()
+            for attempt in range(2):
+                try:
+                    await self._launch(platform)
+                    break
+                except Conflict:
+                    raise
+                except Exception:
+                    await self._close_browser()
+                    if attempt:
+                        raise
+                    await asyncio.sleep(1)
+
+    async def _acquire_probe(self, operation):
+        if self.lease:
+            raise Conflict('Browser is in use')
+        current = self.db.one('operations',operation['id'])
+        if current['state'] != 'running':
+            raise Conflict('Probe was cancelled before startup')
+        try:
+            await self._ensure_browser(operation['platform'])
+            self.lease={'lease':secrets.token_urlsafe(32),'operation_id':operation['id'],
+                        'generation':operation['generation'],'endpoint':self.endpoint}
+            self._validate(self.lease['lease'])
+            self.probe_existing_pages=set(self.context.pages)
+            return dict(self.lease)
+        except BaseException:
+            self.lease=None
+            await self._close_browser()
+            raise
+
+    async def _release_probe(self, lease):
+        self._validate(lease,ending=True)
+        try:
+            async def close_pages():
+                for page in list(self.context.pages):
+                    if page not in self.probe_existing_pages:
+                        await page.close()
+            await asyncio.wait_for(close_pages(),timeout=2)
+        finally:
+            self.lease=None
+            self.last_used=time.monotonic()
 
     async def _launch(self, platform):
         from playwright.async_api import async_playwright
@@ -333,6 +378,8 @@ class SessionManager:
 
     async def _command(self, lease, action, identity=None, new_auth=False, state=None):
         job = self._validate(lease)
+        if self.lease.get('operation_id'):
+            raise Conflict('Probes cannot modify authentication or show login')
         if action == "show":
             window_visibility(self.process.pid, True)
             return {"shown": True}
@@ -357,10 +404,6 @@ class SessionManager:
                 and identity.get("id")
                 and previous["account_id"] != identity["id"]
                 and job["dataset_id"]
-                and self.db.query(
-                    "SELECT 1 FROM records WHERE dataset_id=? LIMIT 1",
-                    (job["dataset_id"],),
-                )
             )
             if changed:
                 self.store.pause(job["id"], self.platform, "account_changed")
@@ -369,7 +412,7 @@ class SessionManager:
             self.pending_auth_generation |= new_auth
             self.store.check(self.platform, "authenticated")
             saved = await self._save(new_auth=new_auth)
-            return {"saved": saved, "account_changed": changed}
+            return {"saved": saved, "account_changed": changed,'generation':self.store.get(self.platform)['generation']}
         raise ValueError("Unknown session operation")
 
     async def _save(self, *, new_auth=False, ending=False):
@@ -379,22 +422,27 @@ class SessionManager:
             snapshot = await asyncio.wait_for(
                 self.context.storage_state(indexed_db=True), timeout=20
             )
-            if self.lease:
-                job = self._validate(self.lease["lease"], ending=ending)
-                if ending and job["state"] != "completed":
-                    return False
-            saved = self.store.save(
-                self.platform,
-                snapshot,
-                self.identity,
-                new_auth=new_auth or self.pending_auth_generation,
-            )
-            if saved:
-                self.pending_auth_generation = False
+            with self.db.lock:
                 if self.lease:
-                    self.lease["generation"] = self.store.get(self.platform)[
-                        "generation"
-                    ]
+                    job = self._validate(self.lease["lease"], ending=ending)
+                    if ending and job["state"] != "completed":
+                        return False
+                saved = self.store.save(
+                    self.platform,
+                    snapshot,
+                    self.identity,
+                    new_auth=new_auth or self.pending_auth_generation,
+                )
+                if saved:
+                    self.pending_auth_generation = False
+                    if self.lease:
+                        self.lease["generation"] = self.store.get(self.platform)[
+                            "generation"
+                        ]
+                        if self.lease.get('job_id'):
+                            session=self.store.get(self.platform)
+                            self.db.execute('UPDATE execution_sessions SET generation=?,account_id=? WHERE job_id=? AND attempt=? AND (account_id IS NULL OR account_id=?)',
+                                            (session['generation'],session['account_id'],self.lease['job_id'],self.lease['attempt'],session['account_id']))
             return saved
         except Conflict:
             return False

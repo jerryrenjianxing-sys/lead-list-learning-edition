@@ -65,13 +65,25 @@ class AsyncFileWriter:
                 await writer.writerow(item)
 
     async def write_to_jsonl(self, item: Dict, item_type: str):
-        file_path = self._get_file_path('jsonl', item_type)
         async with self.lock:
-            async with aiofiles.open(file_path, 'a', encoding='utf-8') as f:
-                await f.write(json.dumps(item, ensure_ascii=False) + '\n')
+            committed = None
             if os.getenv("MEDIAWORKBENCH_JOB_ID"):
                 from workbench.queue import collect_record
-                collect_record(item, item_type, self.platform)
+                committed = collect_record(item, item_type, self.platform)
+            try:
+                file_path = self._get_file_path('jsonl', item_type)
+                async with aiofiles.open(file_path, 'a', encoding='utf-8') as f:
+                    await f.write(json.dumps(item, ensure_ascii=False) + '\n')
+            except OSError:
+                if not committed:
+                    raise
+                from workbench.raw_files import report
+                report(committed,'failed')
+                utils.logger.warning('Record saved in database; raw file failed and can be rebuilt')
+            else:
+                if committed:
+                    from workbench.raw_files import report
+                    report(committed,'saved')
 
     async def write_single_item_to_json(self, item: Dict, item_type: str):
         file_path = self._get_file_path('json', item_type)

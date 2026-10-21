@@ -39,6 +39,8 @@ from .help import TieBaExtractor
 PC_SIGN_SECRET = "36770b1f34c9bbf2e7d1a99d2b82fa9e"
 
 
+from workbench.platform_observation import observed
+
 class BaiduTieBaClient(AbstractApiClient):
 
     def __init__(
@@ -147,6 +149,7 @@ class BaiduTieBaClient(AbstractApiClient):
             raise Exception(f"Can not get Tieba tbs from pc sync API: {sync_data}")
         return self._pc_tbs
 
+    @observed('tieba','comments')
     async def _get_pc_page_data(self, note_id: str, page: int = 1) -> Dict:
         tbs = await self._get_pc_tbs()
         return await self._fetch_json_by_browser(
@@ -372,6 +375,7 @@ class BaiduTieBaClient(AbstractApiClient):
         self.headers["Cookie"] = cookie_str
         utils.logger.info("[BaiduTieBaClient.update_cookies] Cookie has been updated")
 
+    @observed('tieba','search')
     async def get_notes_by_keyword(
         self,
         keyword: str,
@@ -425,6 +429,7 @@ class BaiduTieBaClient(AbstractApiClient):
             utils.logger.error(f"[BaiduTieBaClient.get_notes_by_keyword] Search failed: {e}")
             raise
 
+    @observed('tieba','detail')
     async def get_note_by_id(self, note_id: str) -> TiebaNote:
         """
         Get post details by post ID (uses Playwright to access page, avoiding API detection)
@@ -646,6 +651,7 @@ class BaiduTieBaClient(AbstractApiClient):
             utils.logger.error(f"[BaiduTieBaClient.get_notes_by_tieba_name] Failed to get Tieba post list: {e}")
             raise
 
+    @observed('tieba','profile')
     async def get_creator_info_by_url(self, creator_url: str) -> TiebaCreator:
         """
         Get creator information by creator URL from current PC JSON API.
@@ -712,6 +718,7 @@ class BaiduTieBaClient(AbstractApiClient):
             use_sign=True,
         )
 
+    @observed('tieba','creator')
     async def get_notes_by_creator(self, user_name: str, page_number: int) -> Dict:
         """
         Get creator's posts by creator (uses Playwright to access page, avoiding API detection)

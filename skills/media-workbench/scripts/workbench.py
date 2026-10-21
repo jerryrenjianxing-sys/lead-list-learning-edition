@@ -496,6 +496,17 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("connect", help="轻量确认本机身份、访问权限和能力摘要")
     commands.add_parser("check")
+    explain = commands.add_parser('explain', help='读取原任务统一状态解释，不发起采集或探测')
+    explain.add_argument('job_id')
+    operation = commands.add_parser('operation', help='查询或取消指定操作')
+    operation.add_argument('operation_id')
+    operation.add_argument('--cancel',action='store_true')
+    operation.add_argument('--request-id')
+    probe = commands.add_parser('probe',help='按能力执行独立对照探测；目前仅抖音启用')
+    probe.add_argument('platform',choices=('dy','xhs','ks','bili','wb','tieba','zhihu'))
+    probe.add_argument('capability',choices=('search','detail','creator','comments','replies','profile'))
+    probe.add_argument('--no-wait',action='store_true')
+    probe.add_argument('--request-id')
     self_test = commands.add_parser("self-test", help="独立运行自检，不创建正式业务成果")
     self_test.add_argument("--local-only", action="store_true")
     actions = self_test.add_mutually_exclusive_group()
@@ -526,6 +537,21 @@ def main():
             result = client.check()
         elif args.command == "connect":
             result = health
+        elif args.command in ('explain','probe','operation'):
+            if args.command not in health.get('summary',{}).get('operations',[]):
+                raise ClientError('FEATURE_UNAVAILABLE','当前软件不支持状态与恢复命令。',next_action='升级至 0.5.0 或更新版本；旧任务和数据保留。')
+            if args.command=='explain':
+                result=json.loads(client.send('GET','/api/v1/jobs/'+args.job_id+'/explain'))
+            elif args.command=='operation':
+                path='/api/v1/operations/'+args.operation_id
+                result=client.request('POST',path+'/cancel',b'{}',request_id=args.request_id) if args.cancel else json.loads(client.send('GET',path))
+            else:
+                result=client.request('POST','/api/v1/platforms/'+args.platform+'/probes',
+                                      json.dumps({'capability':args.capability}).encode(),request_id=args.request_id)
+                deadline=time.monotonic()+65
+                while not args.no_wait and result['state'] in ('accepted','running') and time.monotonic()<deadline:
+                    time.sleep(.5)
+                    result=json.loads(client.send('GET','/api/v1/operations/'+result['id']))
         elif args.command == "self-test":
             if "self_test" not in health.get("summary", {}).get("operations", []):
                 raise ClientError("FEATURE_UNAVAILABLE", "当前软件不支持运行自检。", next_action="升级到支持独立运行自检的软件版本。")

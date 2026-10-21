@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 type Item = Record<string, any>;
+const capabilityNames: Record<string,string> = { search:"搜索",detail:"内容详情",creator:"作者内容",comments:"评论",replies:"回复",profile:"公开资料" };
+const availabilityNames: Record<string,string> = { available:"最近读取成功",unconfirmed:"尚未确认",restricted:"平台明确限制",suspected_restriction:"疑似访问限制",manual_action:"需要人工处理",network_error:"网络异常",interface_error:"接口需检查",content_unavailable:"对照来源不可用" };
+const operationNames: Record<string,string> = { login:"登录",check:"检查登录／保存",open:"打开平台",probe:"能力探测" };
+const operationStates: Record<string,string> = { accepted:"已受理",running:"执行中",completed:"已完成",failed:"未完成",cancelled:"已取消" };
 const phases: Record<string, string> = {
   submitting: "正在提交登录请求…",
   queued: "登录已排队，前面的任务结束后会启动浏览器，请勿重复点击。",
@@ -33,6 +37,8 @@ export default function PlatformLogin({
   stop,
   action,
   resume,
+  probe,
+  cancelOperation,
 }: {
   platforms: Item[];
   pending: Record<string, string>;
@@ -42,6 +48,8 @@ export default function PlatformLogin({
   stop: (id: string) => void;
   action: (id: string, action: string) => void;
   resume: (id: string) => void;
+  probe: (id: string,capability: string) => void;
+  cancelOperation: (id: string) => void;
 }) {
   const [forgetting, setForgetting] = useState<string | null>(null);
   const confirmRef = useRef<HTMLDivElement>(null);
@@ -57,6 +65,7 @@ export default function PlatformLogin({
       <div className="wb-platform-grid">
         {platforms.map((p) => {
           const login = p.login;
+          const operation=p.last_operation;
           const working = Boolean(pending[p.id] || login?.active);
           const phase = pending[p.id] ? "submitting" : login?.phase;
           const message = pending[p.id]
@@ -138,6 +147,20 @@ export default function PlatformLogin({
                   })}
                 </small>
               )}
+              {operation && <div className="wb-login-feedback" role="status">
+                <p>{operationNames[operation.kind] || operation.kind}：{operationStates[operation.state] || operation.state} · {operation.id.slice(0,8)}</p>
+                {operation.reason_code && <small>原因：{operation.reason_code}{operation.attempted === false ? " · 未执行平台请求" : ""}</small>}
+                {operation.state === "failed" && <small>可查看详情，处理原因后重试。</small>}
+                {operation.kind === "probe" && ["accepted","running"].includes(operation.state) && <button onClick={() => cancelOperation(operation.id)}>取消探测</button>}
+              </div>}
+              {!!p.availability?.items?.length && <div className="wb-availability">
+                <h3>采集可用性</h3>
+                {p.availability.items.map((a: Item) => <p key={a.capability}>
+                  {capabilityNames[a.capability] || a.capability}：{availabilityNames[a.state] || a.state}
+                  {a.cooldown_until && <small>下次复查：{new Date(a.cooldown_until * 1000).toLocaleString("zh-CN")} · 已自动复查 {a.checks} 次；重新登录不会清空等待。</small>}
+                  {a.reason && <small>原因：{a.reason}</small>}
+                </p>)}
+              </div>}
               <div className="wb-login-actions">
                 <button
                   className="wb-primary"
@@ -174,6 +197,8 @@ export default function PlatformLogin({
               <details>
                 <summary>更多操作</summary>
                 <div className="wb-login-actions">
+                  {p.availability?.automatic_checks_enabled && <button disabled={working || operation?.kind === "probe" && ["accepted","running"].includes(operation.state)} onClick={() => probe(p.id,"search")}>检查搜索可用性</button>}
+                  {p.availability?.automatic_checks_enabled && p.availability.items.filter((a: Item) => ["detail","comments","replies"].includes(a.capability)).map((a: Item) => <button key={a.capability} disabled={working || operation?.kind === "probe" && ["accepted","running"].includes(operation.state)} onClick={() => probe(p.id,a.capability)}>检查{capabilityNames[a.capability]}</button>)}
                   <button disabled={working} onClick={() => action(p.id, "open")}>
                     打开平台浏览器
                   </button>

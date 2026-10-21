@@ -44,6 +44,8 @@ from .field import SearchSort, SearchTime, SearchType
 from .help import ZhihuExtractor, sign
 
 
+from workbench.platform_observation import observed
+
 class ZhiHuClient(AbstractApiClient, ProxyRefreshMixin):
 
     def __init__(
@@ -186,6 +188,7 @@ class ZhiHuClient(AbstractApiClient, ProxyRefreshMixin):
         params = {"include": "email,is_active,is_bind_phone"}
         return await self.get("/api/v4/me", params)
 
+    @observed('zhihu','search')
     async def get_note_by_keyword(
         self,
         keyword: str,
@@ -228,6 +231,7 @@ class ZhiHuClient(AbstractApiClient, ProxyRefreshMixin):
         utils.logger.info(f"[ZhiHuClient.get_note_by_keyword] Search result: {search_res}")
         return self._extractor.extract_contents_from_search(search_res)
 
+    @observed('zhihu','comments')
     async def get_root_comments(
         self,
         content_id: str,
@@ -259,6 +263,7 @@ class ZhiHuClient(AbstractApiClient, ProxyRefreshMixin):
         # }
         # return await self.get(uri, params)
 
+    @observed('zhihu','replies')
     async def get_child_comments(
         self,
         root_comment_id: str,
@@ -383,6 +388,7 @@ class ZhiHuClient(AbstractApiClient, ProxyRefreshMixin):
                 await asyncio.sleep(crawl_interval)
         return all_sub_comments
 
+    @observed('zhihu','profile')
     async def get_creator_info(self, url_token: str) -> Optional[ZhihuCreator]:
         """
         Get creator information
@@ -396,6 +402,7 @@ class ZhiHuClient(AbstractApiClient, ProxyRefreshMixin):
         html_content: str = await self.get(uri, return_response=True)
         return self._extractor.extract_creator(url_token, html_content)
 
+    @observed('zhihu','creator')
     async def get_creator_answers(self, url_token: str, offset: int = 0, limit: int = 20) -> Dict:
         """
         Get creator's answers
@@ -418,6 +425,7 @@ class ZhiHuClient(AbstractApiClient, ProxyRefreshMixin):
         }
         return await self.get(uri, params)
 
+    @observed('zhihu','creator')
     async def get_creator_articles(self, url_token: str, offset: int = 0, limit: int = 20) -> Dict:
         """
         Get creator's articles
@@ -439,6 +447,7 @@ class ZhiHuClient(AbstractApiClient, ProxyRefreshMixin):
         }
         return await self.get(uri, params)
 
+    @observed('zhihu','creator')
     async def get_creator_videos(self, url_token: str, offset: int = 0, limit: int = 20) -> Dict:
         """
         Get creator's videos
@@ -618,6 +627,7 @@ class ZhiHuClient(AbstractApiClient, ProxyRefreshMixin):
         response_html = await self.get(uri, return_response=True)
         return self._extractor.extract_article_content_from_html(response_html)
 
+    @observed('zhihu','detail')
     async def get_video_info(self, video_id: str) -> Optional[ZhihuContent]:
         """
         Get video information

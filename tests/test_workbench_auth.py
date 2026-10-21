@@ -35,7 +35,7 @@ def test_migration_backs_up_original_and_is_idempotent(tmp_path):
     with sqlite3.connect(backups[0]) as con:
         assert con.execute("PRAGMA user_version").fetchone()[0] == 1
         assert con.execute("SELECT value FROM settings").fetchone()[0] == "123"
-    assert db.query("PRAGMA user_version")[0]["user_version"] == 4
+    assert db.query("PRAGMA user_version")[0]["user_version"] == 5
     Database(tmp_path)
     assert len(list((tmp_path / "backups").glob("*.sqlite3"))) == 1
     assert db.query("SELECT value FROM settings")[0]["value"] == "123"

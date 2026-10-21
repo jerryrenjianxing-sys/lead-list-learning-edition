@@ -24,10 +24,11 @@ from httpx import RequestError
 class DataFetchError(RequestError):
     """something error when fetch"""
 
-    def __init__(self, message: str, *, request=None, reason: str = "request_failed", http_status: int | None = None):
+    def __init__(self, message: str, *, request=None, reason: str = "request_failed", http_status: int | None = None, retry_after: int = 0):
         super().__init__(message, request=request)
         self.reason = reason
         self.http_status = http_status
+        self.retry_after = retry_after
 
 
 class IPBlockError(RequestError):

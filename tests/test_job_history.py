@@ -104,5 +104,5 @@ def test_v2_migration_backs_up_and_keeps_login(tmp_path):
     backup = next((tmp_path / "backups").glob("*.sqlite3"))
     with sqlite3.connect(backup) as con:
         assert con.execute("PRAGMA user_version").fetchone()[0] == 2
-    assert db.query("PRAGMA user_version")[0]["user_version"] == 4
+    assert db.query("PRAGMA user_version")[0]["user_version"] == 5
     assert db.query("SELECT value FROM settings")[0]["value"] == "123"

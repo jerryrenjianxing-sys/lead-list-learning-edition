@@ -176,6 +176,14 @@ def test_fresh_client_connects_from_arbitrary_cwd_without_diagnostics(tmp_path):
         assert json.loads(result.stdout)["items"] == []
         assert visited[before_api:] == [("GET", "/api/v1/agent/handshake"), ("GET", "/api/v1/datasets")]
         assert not any(method == "POST" for method, _ in visited)
+        result = subprocess.run([sys.executable,str(fresh),'--instance',str(discovery),'probe','xhs','comments','--no-wait'],
+                                cwd=outside,env=env,capture_output=True,encoding='utf-8',timeout=15)
+        assert result.returncode == 0, result.stdout+result.stderr
+        operation_id=json.loads(result.stdout)['id']
+        result = subprocess.run([sys.executable,str(fresh),'--instance',str(discovery),'operation',operation_id],
+                                cwd=outside,env=env,capture_output=True,encoding='utf-8',timeout=15)
+        assert result.returncode == 0, result.stdout+result.stderr
+        assert json.loads(result.stdout)['reason_code']=='probe_not_enabled'
         request_file = outside / "请求.json"
         request_file.write_text('{"name":"concurrent CLI","records":[]}', encoding="utf-8")
         command = [sys.executable, str(fresh), "--instance", str(discovery), "api", "POST",

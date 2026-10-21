@@ -9,6 +9,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from .recovery_schema import SCHEMA as RECOVERY_SCHEMA
 
 
 def now():
@@ -84,18 +85,19 @@ class Database:
         self.accept_writes = True
         with self.connect() as con:
             version = con.execute("PRAGMA user_version").fetchone()[0]
-            if version > 4:
+            if version > 5:
                 raise RuntimeError(
                     "Database belongs to a newer application. Open that version; existing data was not changed."
                 )
-            if version in (1, 2, 3):
+            if version in (1, 2, 3, 4):
                 self.backup()
             con.executescript(
                 "BEGIN IMMEDIATE;\n"
                 + SCHEMA
                 + AUTH_SCHEMA
                 + SESSION_SCHEMA
-                + "\nPRAGMA user_version=4;\nCOMMIT;"
+                + RECOVERY_SCHEMA
+                + "\nPRAGMA user_version=5;\nCOMMIT;"
             )
 
     @contextmanager
@@ -145,7 +147,7 @@ class Database:
             return [dict(r) for r in con.execute(sql, args)]
 
     def one(self, table, identity):
-        if table not in {"jobs", "datasets", "analyses", "artifacts"}:
+        if table not in {"jobs", "datasets", "analyses", "artifacts", "operations"}:
             raise ValueError(table)
         rows = self.query(f"SELECT * FROM {table} WHERE id=?", (identity,))
         if not rows:
@@ -157,11 +159,13 @@ class Database:
             con.execute(sql, args)
             con.commit()
 
-    def event(self, job_id, message, level="info"):
-        self.execute(
-            "INSERT INTO events(job_id,created,level,message) VALUES(?,?,?,?)",
-            (job_id, now(), level, message),
-        )
+    def event(self, job_id, message, level="info", *, attempt=None, source="worker"):
+        from .recovery import event
+        with self.lock, self.connect() as con:
+            if attempt is None:
+                attempt = con.execute("SELECT attempt FROM jobs WHERE id=?", (job_id,)).fetchone()[0]
+            event(con, job_id, attempt, message, source=source, kind="log", level=level)
+            con.commit()
 
     def backup(self):
         directory = self.root / "backups"

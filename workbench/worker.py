@@ -17,6 +17,8 @@ def main():
     options = json.loads(job["options"])
     run_dir = root / "runs" / job_id
     run_dir.mkdir(parents=True, exist_ok=True)
+    raw_dir=run_dir/'attempts'/str(job['attempt'])/'raw'
+    raw_dir.mkdir(parents=True,exist_ok=True)
     os.environ.update(
         {
             "MEDIAWORKBENCH_JOB_ID": job_id,
@@ -27,7 +29,7 @@ def main():
     os.chdir(ROOT)
     import config
 
-    config.SAVE_DATA_PATH = str(run_dir)
+    config.SAVE_DATA_PATH = str(raw_dir)
     # Enforce this for old persisted jobs too, independently of their options.
     config.ENABLE_GET_MEDIA = False
     config.LEAD_MODE = options["enrich_profiles"]
@@ -70,7 +72,7 @@ def main():
         "--save_data_option",
         "jsonl",
         "--save_data_path",
-        str(run_dir),
+        str(raw_dir),
         "--start",
         str(options["start_page"]),
     ]
@@ -102,6 +104,8 @@ def main():
         config.COOKIES = unseal(options["cookies"])
     sys.argv = args
     import main as engine
+    from .redaction import install
+    install()
     from tools.app_runner import run
 
     async def crawl():

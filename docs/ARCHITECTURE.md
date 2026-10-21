@@ -1,6 +1,6 @@
-# 0.4 架构与维护入口
+# 架构与维护入口
 
-本文件描述当前源码的实际职责，配合 [0.4.0 规格](specs/0.4.0-agent-access.md)、[开发约定](../CONTRIBUTING.md)、[术语](../GLOSSARY.md) 和 [就绪与诊断 ADR](adr/0001-readiness-and-diagnostics.md) 使用。版本以 `pyproject.toml` 为准；本轮保留 Electron、Python、SQLite schema 4 和采集依赖，重做接入及诊断流程，不全面重写项目。
+本文件描述当前源码的职责，配合 [0.5.0 规格](specs/0.5.0-state-recovery.md)、[开发约定](../CONTRIBUTING.md)、[术语](../GLOSSARY.md) 和 [就绪与诊断 ADR](adr/0001-readiness-and-diagnostics.md) 使用。0.5.0 使用 SQLite schema 5，保留 Electron、Python 和冻结的采集依赖。下方 0.4.x 说明保留历史背景；新增状态与恢复见末节。
 
 ## 入口与调用关系
 
@@ -82,7 +82,7 @@ flowchart TD
 | 小红书异常（1） | `media_platform/xhs/exception.py`：既有专用异常分类 |
 | 旧 API 兼容（6） | `api/main.py`、`api/routers/{crawler.py,data.py}`、`api/schemas/{__init__.py,crawler.py}`、`api/services/crawler_manager.py`：旧网页/配置及恢复逻辑保留。Electron 主后台使用 `python -m workbench`，不是以旧 crawler_manager 取代新持久队列 |
 | 配置与参数（2） | `cmd_arg/arg.py`、`config/base_config.py`：既有采集选项及运行配置。`workbench/worker.py` 将持久 Job 映射到原 `main.py`，强制本产品关闭媒体下载 |
-| 写入与旧潜客输出（2） | `tools/async_file_writer.py`、新增 `tools/lead_sink.py`：JSONL 保存后向工作台收集记录；保留旧补采/潜客路径的追加、去重及检查点。历史路径中的业务规则不作为通用 Analysis 或 Skill 的约束 |
+| 写入与旧潜客输出（2） | `tools/async_file_writer.py`、新增 `tools/lead_sink.py`：产品模式先提交 SQLite，再独立记录 JSONL 写入结果；保留旧补采/潜客路径。历史路径中的业务规则不作为通用 Analysis 或 Skill 的约束 |
 | 浏览器及登录工具（3） | `tools/browser_launcher.py`、`tools/cdp_browser.py`、`tools/crawler_util.py`：既有浏览器定位、连接受管理会话、档案根及二维码/登录反馈接点 |
 | 存储、代理及依赖（4） | `store/kuaishou/__init__.py`、`proxy/base_proxy.py`、`pyproject.toml`、`uv.lock`：现有兼容与锁定依赖差异；本轮除项目版本元数据外不据此升级采集运行时 |
 
@@ -97,3 +97,13 @@ flowchart TD
 `tools/crawl_status.py`在现有任务运行目录保存按运行次数隔离的JSONL结束记录；平台只提交阶段、范围、原因和白名单响应结构信息。队列按本次运行读取并将汇总追加到checkpoint.collection，继续保留退出码、已保存数量和旧worker日志适配。HTTP与Skill共享该结果，不增加数据库表。正常接口结束、设置数量及无结果与异常未确认分开；不能据此证明全站覆盖或账号不受限制。
 
 本轮定制新增抖音异常类型的安全原因/HTTP状态字段，以及搜索、评论、回复的终止报告；不重新合并上游或升级采集依赖。浏览器与登录租约不变，历史任务记录保留。旧版缺少结构化结束证据时不追认真实平台原因。
+
+## 0.5.0 状态与恢复
+
+`recovery.py` 统一投影 HTTP、页面及 Skill 的状态解释，保存轮次、范围、结构化事件与计数；`ownership.py` 是业务写入和账号代次的共同围栏。队列按事务登记预期范围，再派发采集；平台请求的 `observed` 接点补充动态范围及白名单响应信息。列表本身不作为终页证据，缺失证据保守记未确认。
+
+`availability.py` 保存每项能力、独立操作、等待和冷却决策；`probe_runner.py` 管理受控子进程及 60 秒总预算，`probe_worker.py` 只读对照，`request_budget.py` 约束各层网络请求。探测与 Job 共享队列和浏览器租约，但不创建研究数据。自动探测和冷却只对抖音启用，其他平台仍使用原有采集及认证续接。`raw_files.py` 从数据库修订重建派生文件，文件状态独立于业务提交。
+
+本轮继承补丁：七个 `client.py` 增加显式按能力的观测接点；抖音请求支持共享预算、429 与 Retry-After 原因；`tools/crawl_status.py` 同步有围栏的范围事实；`tools/async_file_writer.py` 改为数据库先提交。无关上游代码保持原样，原作者 NON-COMMERCIAL LEARNING LICENSE 1.1 及各文件来源声明继续保留。未合并新的上游提交，也未升级第三方锁文件或浏览器。
+
+新增 API：`jobs/ID/{explain,attempts,scopes,diagnostics,raw-files}`、`operations/ID`、`platforms/ID/{probes,availability}`，均受本机认证保护。操作返回旧 job 字段并追加 operation_id；实际状态须继续查询，HTTP 200 只代表受理。任务台保留 MD 文件入口，新增轮次时间线及脱敏诊断；客户端增加 explain/probe/operation。

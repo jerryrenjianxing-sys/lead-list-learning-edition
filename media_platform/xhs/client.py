@@ -48,6 +48,8 @@ from .extractor import XiaoHongShuExtractor
 from .playwright_sign import sign_with_xhshow
 
 
+from workbench.platform_observation import observed
+
 class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
 
     def __init__(
@@ -311,6 +313,7 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         self.headers["Cookie"] = cookie_str
         self.cookie_dict = cookie_dict
 
+    @observed('xhs','search')
     async def get_note_by_keyword(
         self,
         keyword: str,
@@ -343,6 +346,7 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         }
         return await self.post(uri, data)
 
+    @observed('xhs','detail')
     async def get_note_by_id(
         self,
         note_id: str,
@@ -380,6 +384,7 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         )
         return dict()
 
+    @observed('xhs','comments')
     async def get_note_comments(
         self,
         note_id: str,
@@ -406,6 +411,7 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         }
         return await self.get(uri, params)
 
+    @observed('xhs','replies')
     async def get_note_sub_comments(
         self,
         note_id: str,
@@ -615,6 +621,7 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
                 continue  # Continue to next comment
         return result
 
+    @observed('xhs','profile')
     async def get_creator_info(
         self, user_id: str, xsec_token: str = "", xsec_source: str = ""
     ) -> Dict:
@@ -677,6 +684,7 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         )
         return profile if isinstance(profile, dict) else {}
 
+    @observed('xhs','creator')
     async def get_notes_by_creator(
         self,
         creator: str,

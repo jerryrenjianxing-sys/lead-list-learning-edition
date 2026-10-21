@@ -21,11 +21,13 @@ class WorkspaceReadModel:
             + "ORDER BY j.created DESC"
         )
         return {
-            "items": [job_view(row) for row in rows],
+            "items": [job_view(row, self.db) for row in rows],
             "archived_count": self.db.query("SELECT COUNT(*) n FROM job_history_archive")[0]["n"],
         }
 
     def platforms(self):
+        from .availability import Availability
+        from .recovery import Recovery
         items = []
         for platform in self.platform_capabilities()["platforms"]:
             identity = platform["id"]
@@ -39,8 +41,14 @@ class WorkspaceReadModel:
                 **platform_view(self.db, identity),
                 **self.sessions.store.view(identity),
                 "last_task": last[0] if last else None,
+                'availability':Availability(self.db).view(identity),
+                'last_operation': self._last_operation(identity,Recovery(self.db)),
             })
         return {"items": items}
+
+    def _last_operation(self,platform,recovery):
+        rows=self.db.query('SELECT id FROM operations WHERE platform=? ORDER BY created DESC,id DESC LIMIT 1',(platform,))
+        return recovery.operation(rows[0]['id']) if rows else None
 
     def datasets(self):
         return {"items": [

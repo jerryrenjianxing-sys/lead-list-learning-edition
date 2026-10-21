@@ -43,6 +43,8 @@ from .graphql import KuaiShouGraphQL
 from .help import get_ks_sign_from_playwright
 
 
+from workbench.platform_observation import observed
+
 class KuaiShouClient(AbstractApiClient, ProxyRefreshMixin):
     def __init__(
         self,
@@ -171,6 +173,7 @@ class KuaiShouClient(AbstractApiClient, ProxyRefreshMixin):
             raise DataFetchError(f"REST API V2 error: {result}")
         raise DataFetchError(f"REST API V2 error: {result}")
 
+    @observed('ks','creator')
     async def get_video_by_creater_v2(self, userId: str, pcursor: str = "") -> Dict:
         """
         获取用户作品列表 - REST 签名版
@@ -182,6 +185,7 @@ class KuaiShouClient(AbstractApiClient, ProxyRefreshMixin):
         post_data = {"user_id": userId, "pcursor": pcursor, "page": "profile"}
         return await self.request_rest_v2_signed("/rest/v/profile/feed", post_data)
 
+    @observed('ks','search')
     async def search_info_by_keyword_v2(
         self, keyword: str, pcursor: str, search_session_id: str = ""
     ) -> Dict:
@@ -231,6 +235,7 @@ class KuaiShouClient(AbstractApiClient, ProxyRefreshMixin):
         self.headers["Cookie"] = cookie_str
         self.cookie_dict = cookie_dict
 
+    @observed('ks','search')
     async def search_info_by_keyword(
         self, keyword: str, pcursor: str, search_session_id: str = ""
     ):
@@ -284,6 +289,7 @@ class KuaiShouClient(AbstractApiClient, ProxyRefreshMixin):
                 )
                 return ""
 
+    @observed('ks','detail')
     async def get_video_info(self, photo_id: str) -> Dict:
         """
         Kuaishou web video detail api
@@ -297,6 +303,7 @@ class KuaiShouClient(AbstractApiClient, ProxyRefreshMixin):
         }
         return await self.post("", post_data)
 
+    @observed('ks','comments')
     async def get_video_comments(self, photo_id: str, pcursor: str = "") -> Dict:
         """Get video first-level comments using REST API V2
         :param photo_id: video id you want to fetch
@@ -309,6 +316,7 @@ class KuaiShouClient(AbstractApiClient, ProxyRefreshMixin):
         }
         return await self.request_rest_v2("/rest/v/photo/comment/list", post_data)
 
+    @observed('ks','replies')
     async def get_video_sub_comments(
         self, photo_id: str, root_comment_id: int, pcursor: str = ""
     ) -> Dict:
@@ -325,6 +333,7 @@ class KuaiShouClient(AbstractApiClient, ProxyRefreshMixin):
         }
         return await self.request_rest_v2("/rest/v/photo/comment/sublist", post_data)
 
+    @observed('ks','profile')
     async def get_creator_profile(self, userId: str) -> Dict:
         post_data = {
             "operationName": "visionProfile",
@@ -333,6 +342,7 @@ class KuaiShouClient(AbstractApiClient, ProxyRefreshMixin):
         }
         return await self.post("", post_data)
 
+    @observed('ks','creator')
     async def get_video_by_creater(self, userId: str, pcursor: str = "") -> Dict:
         post_data = {
             "operationName": "visionProfilePhotoList",

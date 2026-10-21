@@ -35,7 +35,7 @@ def test_v3_migration_backs_up_and_keeps_auth(tmp_path):
     (backup,) = (tmp_path / "backups").glob("*.sqlite3")
     with sqlite3.connect(backup) as con:
         assert con.execute("PRAGMA user_version").fetchone()[0] == 3
-    assert db.query("PRAGMA user_version")[0]["user_version"] == 4
+    assert db.query("PRAGMA user_version")[0]["user_version"] == 5
     assert SessionStore(db).view("dy")["can_select"]
     Database(tmp_path)
     assert len(list((tmp_path / "backups").glob("*.sqlite3"))) == 1
@@ -90,7 +90,7 @@ def test_resume_only_matching_account_once_and_not_stopped(tmp_path):
     assert store.save("dy", {}, identity, new_auth=True)
     assert store.resume_matching("dy") == [jobs[0]["id"]]
     assert store.resume_matching("dy") == []
-    assert db.one("jobs", jobs[1]["id"])["state"] == "needs_login"
+    assert db.one("jobs", jobs[1]["id"])["state"] == "cancelled"
     assert store.view("dy")["account_confirmation_jobs"] == [jobs[2]["id"]]
 
 

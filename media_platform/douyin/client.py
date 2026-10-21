@@ -62,6 +62,8 @@ def _comment_page(response: object) -> tuple[list[Dict], bool, Optional[str]]:
     return comments, response["has_more"] in (1, True, "1"), None
 
 
+from workbench.platform_observation import observed
+
 class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
 
     def __init__(
@@ -155,11 +157,13 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         # Check whether the proxy has expired before each request
         await self._refresh_proxy_if_expired()
 
-        attempts = 1 if getattr(self, "_workbench_auth_probe", False) else 3
+        budget = getattr(self, '_workbench_request_budget', None)
+        attempts = 1 if getattr(self, "_workbench_auth_probe", False) or budget else 3
         for attempt in range(attempts):
             try:
                 async with make_async_client(proxy=self.proxy) as client:
-                    response = await client.request(method, url, timeout=self.timeout, **kwargs)
+                    timeout = min(self.timeout,budget.take()) if budget else self.timeout
+                    response = await client.request(method, url, timeout=timeout, **kwargs)
                 break
             except httpx.TransportError as exc:
                 if attempt == attempts - 1:
@@ -170,9 +174,11 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
                 await asyncio.sleep(1)
         status = response.status_code
         if status >= 400:
+            from workbench.retry_after import retry_seconds
             raise DataFetchError(
                 f"平台请求返回 HTTP {status}，尚未确认账号状态。",
-                reason="http_error", http_status=status,
+                reason="restriction_explicit" if status==429 else "http_error", http_status=status,
+                retry_after=retry_seconds(response.headers.get('retry-after','')),
             )
         if not response.text.strip():
             raise DataFetchError(
@@ -227,6 +233,7 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         self.headers["Cookie"] = cookie_str
         self.cookie_dict = cookie_dict
 
+    @observed('dy','search')
     async def search_info_by_keyword(
         self,
         keyword: str,
@@ -269,6 +276,7 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         headers["Referer"] = urllib.parse.quote(referer_url, safe=':/')
         return await self.get("/aweme/v1/web/general/search/single/", query_params, headers=headers)
 
+    @observed('dy','detail')
     async def get_video_by_id(self, aweme_id: str) -> Any:
         """
         DouYin Video Detail API
@@ -293,6 +301,7 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         res = await self.get("/aweme/v1/web/aweme/detail/", params, headers)
         return res.get("aweme_detail", {})
 
+    @observed('dy','comments')
     async def get_aweme_comments(self, aweme_id: str, cursor: int = 0):
         """get note comments
 
@@ -305,6 +314,7 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         headers["Referer"] = urllib.parse.quote(referer_url, safe=':/')
         return await self.get(uri, params)
 
+    @observed('dy','replies')
     async def get_sub_comments(self, aweme_id: str, comment_id: str, cursor: int = 0):
         """
             获取子评论
@@ -443,6 +453,7 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         crawl_status.record("comments", stop_reason, scope=aweme_id, response=comments_res)
         return result
 
+    @observed('dy','profile')
     async def get_user_info(self, sec_user_id: str):
         uri = "/aweme/v1/web/user/profile/other/"
         params = {
@@ -452,6 +463,7 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         }
         return await self.get(uri, params)
 
+    @observed('dy','creator')
     async def get_user_aweme_posts(self, sec_user_id: str, max_cursor: str = "") -> Dict:
         uri = "/aweme/v1/web/aweme/post/"
         params = {

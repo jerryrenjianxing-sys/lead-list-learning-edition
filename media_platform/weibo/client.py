@@ -46,6 +46,8 @@ from .exception import DataFetchError
 from .field import SearchType
 
 
+from workbench.platform_observation import observed
+
 class WeiboClient(ProxyRefreshMixin):
 
     def __init__(
@@ -148,6 +150,7 @@ class WeiboClient(ProxyRefreshMixin):
             f"[WeiboClient.update_cookies] Cookie updated successfully for {cookie_urls}, total: {len(cookie_dict)} cookies"
         )
 
+    @observed('wb','search')
     async def get_note_by_keyword(
         self,
         keyword: str,
@@ -170,6 +173,7 @@ class WeiboClient(ProxyRefreshMixin):
         }
         return await self.get(uri, params)
 
+    @observed('wb','comments')
     async def get_note_comments(self, mid_id: str, max_id: int, max_id_type: int = 0) -> Dict:
         """get notes comments
         :param mid_id: Weibo ID
@@ -275,6 +279,7 @@ class WeiboClient(ProxyRefreshMixin):
                 res_sub_comments.extend(sub_comments)
         return res_sub_comments
 
+    @observed('wb','detail')
     async def get_note_info_by_id(self, note_id: str) -> Dict:
         """
         Get note details by note ID
@@ -316,6 +321,7 @@ class WeiboClient(ProxyRefreshMixin):
         m_weibocn_params_dict = parse_qs(unquote(m_weibocn_params))
         return {"fid_container_id": m_weibocn_params_dict.get("fid", [""])[0], "lfid_container_id": m_weibocn_params_dict.get("lfid", [""])[0]}
 
+    @observed('wb','profile')
     async def get_creator_info_by_id(self, creator_id: str) -> Dict:
         """
         Get user details by user ID
@@ -336,6 +342,7 @@ class WeiboClient(ProxyRefreshMixin):
         user_res = await self.get(uri, params)
         return user_res
 
+    @observed('wb','creator')
     async def get_notes_by_creator(
         self,
         creator: str,

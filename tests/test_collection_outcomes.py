@@ -49,7 +49,7 @@ def test_platform_error_is_not_hidden_by_an_empty_search_page(tmp_path):
         "status_code": 400, "status_msg": "fixture-platform-error",
         "data": [], "has_more": 0,
     }]})
-    assert job["state"] == "interrupted", job
+    assert job["state"] == "waiting_access", job
     assert job["checkpoint"]["collection"]["issues"][0]["reason"] == "platform_error"
 
 
@@ -59,7 +59,7 @@ def test_platform_error_is_not_hidden_by_an_empty_search_page(tmp_path):
 ])
 def test_ambiguous_search_preserves_a_structured_stop_reason(tmp_path, response, reason):
     job = crawl_search(tmp_path, {"responses": [response]})
-    assert job["state"] == "interrupted", job
+    assert job["state"] == ("waiting_access" if reason == "empty_unconfirmed" else "interrupted"), job
     outcome = job["checkpoint"]["collection"]
     assert outcome["issues"][0]["reason"] == reason
     assert outcome["issues"][0]["page"] == 1
@@ -130,7 +130,7 @@ def test_comment_request_failure_does_not_claim_account_block_or_expose_body(tmp
         "responses": [{"data": [{"aweme_info": {"aweme_id": "v1", "author": {}}}], "has_more": 0}],
         "comments_http": [reply],
     })
-    assert job["state"] == "partial", job
+    assert job["state"] == ("partial" if reason == "non_json_response" else "waiting_access"), job
     assert "account blocked" not in job["error"]
     assert "fixture-secret-cookie" not in job["error"]
     assert job["checkpoint"]["collection"]["issues"][0]["reason"] == reason
@@ -150,7 +150,7 @@ def test_silent_comment_stop_marks_saved_video_partial(tmp_path, page, reason):
         "responses": [{"data": [{"aweme_info": {"aweme_id": "v1", "author": {}}}], "has_more": 0}],
         "comments_http": [{"body": json.dumps(page)}],
     })
-    assert job["state"] == "partial", job
+    assert job["state"] == ("partial" if reason == "response_unconfirmed" else "waiting_access"), job
     assert job["checkpoint"]["collection"]["issues"][0]["reason"] == reason
 
 
@@ -159,7 +159,7 @@ def test_retry_uses_new_attempt_outcomes_and_preserves_the_original_dataset(tmp_
     first = crawl_search(tmp_path, {"responses": [
         {"data": [video], "has_more": 1}, {"data": [], "has_more": 1},
     ]})
-    assert first["state"] == "partial"
+    assert first["state"] == "waiting_access"
     second = crawl_search(tmp_path, {"responses": [{"data": [video], "has_more": 0}]}, first["id"])
     assert second["state"] == "completed", second
     assert second["attempt"] == 2
@@ -177,7 +177,7 @@ def test_new_reply_failure_keeps_saved_comments_and_reports_partial(tmp_path):
             {"body": json.dumps({"comments": [], "has_more": 1})},
         ],
     })
-    assert job["state"] == "partial", job
+    assert job["state"] == "waiting_access", job
     assert job["checkpoint"]["saved_records"] == 2
     assert job["checkpoint"]["collection"]["issues"][0]["stage"] == "replies"
 

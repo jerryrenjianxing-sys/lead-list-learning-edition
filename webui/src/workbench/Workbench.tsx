@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import PlatformLogin, { authLabel } from "./PlatformLogin";
 import RuntimeChecks from "./RuntimeChecks";
+import RecoveryPanel from "./RecoveryPanel";
 import { pageResources, useWorkspaceResources, type ResourceStatus, type WorkspaceResource } from "./workspace-loader";
 import "./workbench.css";
 type Item = Record<string, any>;
@@ -30,6 +31,7 @@ type Job = {
   attempt: number;
   dataset_id: string | null;
   error?: string | null;
+  status_detail?: { counts: { inserted: number; updated: number; unchanged: number; dataset_total: number }; range_verified: boolean; next_actions: { id: string; label: string; enabled: boolean }[] };
 };
 const platforms = [
   ["xhs", "小红书"],
@@ -60,6 +62,7 @@ const labels: Record<string, string> = {
   failed: "失败",
   partial: "部分完成",
   needs_login: "需要登录",
+  waiting_access: "等待访问恢复",
   waiting_agent: "等待 Agent 分析",
 };
 const name = (id: string) => platforms.find((p) => p[0] === id)?.[1] || id;
@@ -175,12 +178,13 @@ export default function Workbench() {
     E("");
     N("");
     try {
-      await api(
+      const result = await api(
         action === "login" ? "/jobs" : `/platforms/${id}/session/${action}`,
         "POST",
         action === "login" ? { platform: id, crawler_type: "login" } : {},
         15000,
       );
+      if (result.operation_id) N(`操作已受理 · ${result.operation_id.slice(0, 8)}`);
       const p = await api("/platforms", "GET", undefined, 15000);
       applyPlatforms(p.items);
     } catch {
@@ -633,9 +637,10 @@ export default function Workbench() {
                     {(j.checkpoint?.collection?.empty || (j.checkpoint?.collection?.issues?.length ?? 0) > 0) && (
                       <small>{j.checkpoint?.collection?.message}</small>
                     )}
+                    {j.status_detail && j.options.crawler_type !== "login" && <small>本轮新增 {j.status_detail.counts.inserted} · 更新 {j.status_detail.counts.updated} · 重复 {j.status_detail.counts.unchanged} · 累计 {j.status_detail.counts.dataset_total}{!j.status_detail.range_verified ? " · 范围尚未全部确认" : ""}</small>}
                   </button>
                   <Status value={jobStatus(j)} />
-                  {["queued", "running"].includes(j.state) ? (
+                  {["queued", "running", "needs_login", "waiting_access"].includes(j.state) ? (
                     <button
                       disabled={busy}
                       onClick={() =>
@@ -644,7 +649,7 @@ export default function Workbench() {
                         )
                       }
                     >
-                      停止
+                      {["needs_login", "waiting_access"].includes(j.state) ? "停止自动续接" : "停止"}
                     </button>
                   ) : (
                     !["completed", "stopping"].includes(j.state) && (
@@ -660,7 +665,7 @@ export default function Workbench() {
                       </button>
                     )
                   )}
-                  {!["queued", "running", "stopping"].includes(j.state) && (
+                  {!["queued", "running", "stopping", "needs_login", "waiting_access"].includes(j.state) && (
                     <button
                       disabled={busy}
                       onClick={() => void perform(() => clearHistory([j.id]))}
@@ -688,6 +693,7 @@ export default function Workbench() {
                     jobs.find((j) => j.id === jobId)?.checkpoint?.collection?.message ||
                     "运行日志与已保存进度"}
                 </p>
+                <RecoveryPanel key={jobId} jobId={jobId} />
                 <button onClick={() => QR(!qr)}>查看登录二维码</button>
                 {qr && (
                   <div className="wb-qr">
@@ -997,6 +1003,8 @@ export default function Workbench() {
             platforms={statuses}
             pending={pendingLogin}
             clock={clock}
+            probe={(id,capability) => void perform(() => api(`/platforms/${id}/probes`,"POST",{capability}),"探测已受理；可在平台卡片查看操作进度。")}
+            cancelOperation={id => void perform(() => api(`/operations/${id}/cancel`,"POST",{}),"探测已取消。")}
             start={(id) => void startLogin(id)}
             action={(id, action) =>
               action === "forget"

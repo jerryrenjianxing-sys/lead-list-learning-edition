@@ -43,6 +43,7 @@ from .workspace import WorkspaceReadModel
 from .upstream import revision as upstream_revision
 from .sessions import SessionManager
 from .selftest import SelfTests
+from .recovery import Recovery
 
 SKILL = ROOT / "skills" / "media-workbench"
 
@@ -85,8 +86,10 @@ def parse_import(name, content):
 def make_app(root=None, *, run_queue=True):
     root = Path(root or data_root()).resolve()
     db = Database(root)
+    from .availability import Availability
+    availability = Availability(db)
     sessions = SessionManager(db)
-    queue = Queue(db, sessions=sessions if run_queue else None)
+    queue = Queue(db, sessions=sessions if run_queue else None, availability=availability)
     self_tests = SelfTests(root)
     key_file = root / ".access-token"
     if not key_file.exists():
@@ -111,6 +114,7 @@ def make_app(root=None, *, run_queue=True):
     app.state.db, app.state.queue, app.state.token = db, queue, token
     app.state.sessions = sessions
     app.state.self_tests = self_tests
+    app.state.availability = availability
     access = AgentAccess(root, SKILL, sys.executable, discovery_path())
     workspace = WorkspaceReadModel(db, sessions, access.capabilities)
     app.state.agent_access = access
@@ -300,7 +304,7 @@ def make_app(root=None, *, run_queue=True):
 
     @app.get("/api/v1/jobs/{job_id}")
     def job(job_id: str):
-        return job_view(db.one("jobs", job_id))
+        return job_view(db.one("jobs", job_id), db)
 
     @app.post("/api/v1/jobs/{job_id}/{action}")
     def job_control(job_id: str, action: str, request: Request):
@@ -309,14 +313,12 @@ def make_app(root=None, *, run_queue=True):
         return write(request, {}, lambda con: control(con, job_id, action))
 
     @app.get("/api/v1/jobs/{job_id}/events")
-    def events(job_id: str, after: int = 0, limit: int = Query(200, ge=1, le=2000)):
-        db.one("jobs", job_id)
-        return {
-            "items": db.query(
-                "SELECT * FROM events WHERE job_id=? AND seq>? ORDER BY seq LIMIT ?",
-                (job_id, after, limit),
-            )
-        }
+    def events(job_id: str, after: int = 0, limit: int = Query(200, ge=1, le=2000), attempt: int | None = None):
+        return Recovery(db).events(job_id, after, limit, attempt)
+
+    @app.get('/api/v1/jobs/{job_id}/attempts')
+    def attempts(job_id: str):
+        return Recovery(db).attempts(job_id)
 
     @app.get("/api/v1/jobs/{job_id}/qrcode")
     def qrcode(job_id: str):
@@ -331,6 +333,54 @@ def make_app(root=None, *, run_queue=True):
     @app.get("/api/v1/platforms")
     def platforms():
         return workspace.platforms()
+
+    @app.get('/api/v1/operations/{operation_id}')
+    def operation_status(operation_id: str):
+        return Recovery(db).operation(operation_id)
+
+    @app.get('/api/v1/jobs/{job_id}/scopes')
+    def job_scopes(job_id: str, attempt: int | None = None, after: int = 0, limit: int = Query(200,ge=1,le=1000)):
+        return Recovery(db).scopes(job_id,attempt,after,limit)
+
+    @app.get('/api/v1/jobs/{job_id}/explain')
+    def explain_job(job_id: str):
+        job=job_view(db.one('jobs',job_id),db)
+        return {k:job[k] for k in ('id','platform','attempt','state','status_detail')}
+
+    @app.get('/api/v1/jobs/{job_id}/diagnostics')
+    def job_diagnostic(job_id: str):
+        return JSONResponse(Recovery(db).diagnostic(job_id),headers={'Content-Disposition':f'attachment; filename="diagnostic-{job_id}.json"'})
+
+    @app.get('/api/v1/jobs/{job_id}/raw-files')
+    def raw_files(job_id: str):
+        from .raw_files import RawFiles
+        return RawFiles(db).status(job_id)
+
+    @app.post('/api/v1/jobs/{job_id}/raw-files/rebuild')
+    def rebuild_raw(job_id: str):
+        from .raw_files import RawFiles
+        return RawFiles(db).rebuild(job_id)
+
+    @app.post('/api/v1/operations/{operation_id}/cancel')
+    def cancel_operation(operation_id: str, request: Request):
+        operation = Recovery(db).operation(operation_id)
+        if not operation['job_id']:
+            return write(request, {}, lambda con: availability.cancel(con,operation_id))
+        return write(request, {}, lambda con: Recovery.cancel_session_operation(con,operation_id))
+
+    @app.post('/api/v1/platforms/{platform}/probes')
+    def platform_probe(platform: str, body: dict, request: Request):
+        if platform not in PLATFORMS:
+            raise HTTPException(404)
+        if set(body) != {'capability'}:
+            raise ValueError('Supply capability only; probe controls and workers are internal')
+        return write(request,body,lambda con: availability.request(con,platform,body['capability']))
+
+    @app.get('/api/v1/platforms/{platform}/availability')
+    def availability_status(platform: str):
+        if platform not in PLATFORMS:
+            raise HTTPException(404)
+        return availability.view(platform)
 
     @app.post("/api/v1/internal/session", include_in_schema=False)
     def session_command(body: dict):
@@ -688,6 +738,8 @@ def make_app(root=None, *, run_queue=True):
                 raise Conflict(
                     "Collection tasks are still active; apply the update when idle"
                 )
+            if db.query("SELECT id FROM operations WHERE state IN ('accepted','running','cancelling') LIMIT 1"):
+                raise Conflict('平台操作或探测尚未结束，请完成或取消后安装更新。')
             backup_path = db.backup()
             db.accept_writes = False
             queue.stop_event.set()
