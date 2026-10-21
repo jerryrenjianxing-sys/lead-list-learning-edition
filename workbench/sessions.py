@@ -1,6 +1,7 @@
 """One host-owned browser with attempt-scoped worker leases and encrypted recovery."""
 
 from __future__ import annotations
+from contextlib import closing
 import asyncio
 import ctypes
 import json
@@ -375,9 +376,11 @@ class SessionManager:
         for path in (profile / "Default/Network/Cookies", profile / "Default/Cookies"):
             if path.is_file():
                 try:
-                    with sqlite3.connect(
+                    # A connection context only ends the transaction. Chromium
+                    # needs the database handle closed before opening its store.
+                    with closing(sqlite3.connect(
                         path.as_uri() + "?mode=ro", uri=True, timeout=1
-                    ) as con:
+                    )) as con:
                         if con.execute("PRAGMA quick_check").fetchone()[0] != "ok":
                             return True
                 except sqlite3.DatabaseError as exc:

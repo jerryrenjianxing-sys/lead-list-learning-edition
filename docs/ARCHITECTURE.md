@@ -107,3 +107,7 @@ flowchart TD
 本轮继承补丁：七个 `client.py` 增加显式按能力的观测接点；抖音请求支持共享预算、429 与 Retry-After 原因；`tools/crawl_status.py` 同步有围栏的范围事实；`tools/async_file_writer.py` 改为数据库先提交。无关上游代码保持原样，原作者 NON-COMMERCIAL LEARNING LICENSE 1.1 及各文件来源声明继续保留。未合并新的上游提交，也未升级第三方锁文件或浏览器。
 
 新增 API：`jobs/ID/{explain,attempts,scopes,diagnostics,raw-files}`、`operations/ID`、`platforms/ID/{probes,availability}`，均受本机认证保护。操作返回旧 job 字段并追加 operation_id；实际状态须继续查询，HTTP 200 只代表受理。任务台保留 MD 文件入口，新增轮次时间线及脱敏诊断；客户端增加 explain/probe/operation。
+
+## 0.5.1 验收修复
+
+`sessions.py` 的档案检查使用 `contextlib.closing` 确定释放只读 Cookie 数据库连接后才启动浏览器，避免 Chromium 无法加载已保存凭据。没有修改继承的 MediaCrawler 客户端或浏览器参数。`electron/src/host.ts` 在一个启动预算内等待旧子进程并最多替换一次，以生命周期代次撤销停止前的启动及迟到发现；`main.ts` 在后台缺失时继续监测，主动更新停止时暂停监测。依赖、上游提交和 schema 5 维持冻结。

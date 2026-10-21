@@ -169,6 +169,8 @@ def main():
     shutil.copy2(ROOT / "docs/RECOVERY.md", release / "RECOVERY.md")
     if tuple(map(int,args.version.split('.'))) >= (0,5,0):
         shutil.copy2(ROOT/'docs/ROLLBACK_0.4.3.md',release/'ROLLBACK_0.4.3.md')
+        validation = ROOT / 'docs' / f'validation-{args.version}.md'
+        shutil.copy2(validation, release / 'STATE_RECOVERY_VALIDATION.md')
     shutil.copy2(ROOT / "docs/LOGIN_SESSIONS.md", release / "LOGIN_SESSIONS.md")
     shutil.copy2(ROOT / "docs/ELECTRON_MIGRATION.md", release / "ELECTRON_MIGRATION.md")
     if args.include_evidence:

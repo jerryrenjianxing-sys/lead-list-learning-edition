@@ -218,6 +218,9 @@ async function main() {
 }
 main().catch(error => {
   fs.mkdirSync(path.dirname(output), {recursive:true});
+  // Synthetic isolated data only; retain the host trace if a lifecycle assertion fails.
+  const hostLog = path.join(data, 'logs', 'host.log');
+  if (fs.existsSync(hostLog)) fs.copyFileSync(hostLog, output.replace(/\.json$/, '-host.log'));
   fs.writeFileSync(output, JSON.stringify({ok:false,version:instance?.version,checks,cleanup_complete:!desktopProcess || desktopProcess.exitCode !== null,error:error.message},null,2));
   console.error(error.stack); process.exitCode = 1;
 });

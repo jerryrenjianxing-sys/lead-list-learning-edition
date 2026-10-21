@@ -138,6 +138,7 @@ jobs:
           path: |
             release/*/SELF_TEST_RESULT.json
             release/*/ELECTRON_TEST_RESULT.json
+            release/*/ELECTRON_TEST_RESULT-host.log
             release/*/ELECTRON_LIFECYCLE_RESULT.json
             release/*/ELECTRON_UPGRADE_RESULT.json
             release/*/ELECTRON_NATIVE_UPDATE_RESULT.json

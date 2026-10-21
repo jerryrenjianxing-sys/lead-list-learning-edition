@@ -8,12 +8,12 @@
 
 产品显示名为 Media Deep Researcher；内部应用标识及数据目录继续使用 MediaWorkbench，兼容已有安装、登录会话和 Skill 客户端。
 
-> **0.5.0 预览版**：按任务轮次记录采集范围、停止原因、操作回执与保存计数，支持脱敏诊断。抖音新增独立对照探测、持久冷却与有条件续接；空响应、403、超时不直接判定账号风控。首页仍只复制 MD 文件，保留现有账号及分析方式。见[规格](docs/specs/0.5.0-state-recovery.md)、[验证说明](docs/validation-0.5.0.md)及[回退到 0.4.3](docs/ROLLBACK_0.4.3.md)。
+> **0.5.1 预览版**：按任务轮次记录采集范围、停止原因、操作回执与保存计数，支持脱敏诊断。抖音新增独立对照探测、持久冷却与有条件续接；空响应、403、超时不直接判定账号风控。首页仍只复制 MD 文件，保留现有账号及分析方式。见[规格](docs/specs/0.5.0-state-recovery.md)、[验证说明](docs/validation-0.5.1.md)及[回退到 0.4.3](docs/ROLLBACK_0.4.3.md)。
 
 ## 下载
 
-- [下载 Windows x64 安装包](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/download/v0.5.0/MediaWorkbench.Desktop-win-preview-Setup.exe)：包含 Electron、Python、Node 和采集浏览器，无需自行配置开发环境。
-- [新版发行页](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/tag/v0.5.0)：便携版、完整源码、Skill、更新包、校验值与验收说明。
+- [下载 Windows x64 安装包](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/download/v0.5.1/MediaWorkbench.Desktop-win-preview-Setup.exe)：包含 Electron、Python、Node 和采集浏览器，无需自行配置开发环境。
+- [新版发行页](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/tag/v0.5.1)：便携版、完整源码、Skill、更新包、校验值与验收说明。
 - [0.4.3 回退基线](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/tag/v0.4.3)：固定保留本轮改造前版本；回退须恢复升级前 schema 4 数据，不能直接打开 schema 5。
 - [0.3.0 发行页](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/tag/v0.3.0)：保留 Electron 首版历史；其软件内更新源存在问题，请使用新版完整安装包升级。
 - [0.2.0 发行页](https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/releases/tag/v0.2.0)：保留迁移前版本及验证记录。
@@ -31,7 +31,7 @@
 
 要体验分析，可点击「加载演示数据」。这是合成的通勤反馈；分析目标、方法、字段、数量和输出形式由用户决定。Agent 能保存任意结构化结果、证据引用和其他文件附件。
 
-发行附件和本地 `release/0.5.0` 目录包含完整安装包 `MediaWorkbench.Desktop-win-preview-Setup.exe`、便携包、Skill ZIP、源码 ZIP 和 SHA256 校验表。系统验收目标为 Windows 10/11 x64；干净系统验收尚待完成。
+发行附件和本地 `release/0.5.1` 目录包含完整安装包 `MediaWorkbench.Desktop-win-preview-Setup.exe`、便携包、Skill ZIP、源码 ZIP 和 SHA256 校验表。系统验收目标为 Windows 10/11 x64；干净系统验收尚待完成。
 
 已经安装 0.3.0 的用户，请用新版完整安装包覆盖升级一次，以修正该版本的软件内更新源；任务、数据和登录档案保留。0.2.0 可通过原有更新通道或完整安装包升级到 Electron；0.1.1 首次使用完整安装包接入更新通道。修正后在设置或托盘检查更新，自动检查最多每天一次，只提示；下载和安装分别由用户点击。采集或自检运行时暂缓安装，安装前备份数据。
 
@@ -67,7 +67,7 @@ powershell -ExecutionPolicy Bypass -File packaging/build-windows-release.ps1
 
 完整包使用 Electron 44.7.0、Forge 8.0.1、Velopack 1.2.0，以及 python-build-standalone 提供的 Python 3.11.16、锁定的 Python wheels、Node.js 22.22.3 和 Playwright Chromium。构建脚本校验已锁定下载的 SHA256。Electron 自带的 Node/Chromium 用于桌面，采集继续使用独立运行时与专用账号档案。使用者无需安装 Python、Node、WebView2 或 .NET Framework；构建机仍需打包工具。应用不下载媒体，不分发独立 FFmpeg/FFprobe。
 
-版本唯一来源为 `pyproject.toml`。`main` 和 `modernization/**` 提交运行检查；版本标签执行构建、安装迁移和包内自检，先创建草稿并逐项核验附件，再公开预览版。禁止覆盖已发布版本。0.5.0 已获验收后公开授权；真实限制和长期保持登录的未完成检查仍单独披露。开发流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+版本唯一来源为 `pyproject.toml`。`main` 和 `modernization/**` 提交运行检查；版本标签执行构建、安装迁移和包内自检，先创建草稿并逐项核验附件，再公开预览版。禁止覆盖已发布版本。0.5.1 已获验收后公开授权；真实限制和长期保持登录的未完成检查仍单独披露。开发流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 架构
 

@@ -27,7 +27,7 @@ const guard = new DesktopGuard();
 const host = new HostController(paths);
 let window: BrowserWindow | undefined;
 let tray: Tray | undefined;
-let exiting = false, closing = false, starting = false, checkingHost = false;
+let exiting = false, closing = false, starting = false, checkingHost = false, updatingHost = false;
 let healthTimer: NodeJS.Timeout | undefined;
 let updater: DesktopUpdater;
 const restore = () => { if (!window) return; window.show(); if (window.isMinimized()) window.restore(); window.focus(); };
@@ -38,7 +38,7 @@ async function status(text: string): Promise<void> {
   await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
 }
 async function startHost(): Promise<void> {
-  if (starting || exiting) return;
+  if (starting || exiting || closing || updatingHost) return;
   starting = true;
   try {
     const instance = await host.start();
@@ -99,7 +99,13 @@ async function launch(): Promise<void> {
   tray = new Tray(icon);
   tray.setToolTip(`${DISPLAY_NAME} · 后台运行中`); tray.on('double-click', restore);
   updater = new DesktopUpdater({ ...paths, manager: (url, options) => new UpdateManager(url, options), releases: () => githubRelease(paths.version),
-    prepare: () => host.prepareUpdate(), stop: () => host.stop(), recover: async () => { await host.stop(); await startHost(); }, exit: finishExit,
+    prepare: () => host.prepareUpdate(), stop: async () => {
+      updatingHost = true;
+      try { await host.stop(); } catch (error) { updatingHost = false; throw error; }
+    }, recover: async () => {
+      try { await host.stop(); } finally { updatingHost = false; }
+      await startHost();
+    }, exit: finishExit,
     changed: state => { if (window && !window.isDestroyed() && host.instance && trustedSource(window.webContents.getURL(), host.instance.base_url)) window.webContents.send('mdr:update:state', state); }
   });
   installBridge();
@@ -115,9 +121,9 @@ async function launch(): Promise<void> {
   await startHost();
   if (host.instance) void updater.check(true);
   healthTimer = setInterval(() => {
-    if (exiting || closing || starting || checkingHost || !host.instance) return;
+    if (exiting || closing || starting || checkingHost || updatingHost) return;
     checkingHost = true;
-    void host.discover().then(instance => { if (!instance) { host.instance = undefined; return startHost(); } }).catch(error => status(`后台连接未完成\n\n${error.message}\n\n可从托盘重新连接后台。`)).finally(() => { checkingHost = false; });
+    void host.discover().then(instance => { if (!instance && !exiting && !closing && !updatingHost) { host.instance = undefined; return startHost(); } }).catch(error => status(`后台连接未完成\n\n${error.message}\n\n可从托盘重新连接后台。`)).finally(() => { checkingHost = false; });
   }, 15000);
 }
 app.on('before-quit', event => { if (!exiting) { event.preventDefault(); void exitApp(); } });

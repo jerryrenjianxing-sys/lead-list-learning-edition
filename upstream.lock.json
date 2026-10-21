@@ -2,5 +2,5 @@
   "project": "MediaCrawler",
   "repository": "https://github.com/NanmiCoder/MediaCrawler",
   "revision": "380b426000aac3d612837ed72c99808347dc94c9",
-  "policy": "Frozen through 0.5.0; customizations are inventoried in docs/ARCHITECTURE.md; rollback baseline is product v0.4.3, not pristine upstream"
+  "policy": "Frozen through 0.5.1; customizations are inventoried in docs/ARCHITECTURE.md; rollback baseline is product v0.4.3, not pristine upstream"
 }
