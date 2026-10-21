@@ -12,6 +12,7 @@ import psutil
 from .database import Conflict, Missing, dump, uid, now, insert_records
 from .paths import ROOT
 from .auth import active_login, update as auth_update, finish_progress
+from tools import crawl_status
 
 TERMINAL = {"completed", "partial", "failed", "cancelled", "interrupted", "needs_login"}
 PLATFORMS = {
@@ -340,6 +341,7 @@ class Queue:
                 (process.pid, psutil.Process(process.pid).create_time(), job["id"]),
             )
             errors = []
+            unconfirmed = []
 
             def read_output():
                 for line in process.stdout:
@@ -360,6 +362,11 @@ class Queue:
                     )
                     if level == "error":
                         errors.append(line)
+                    if "[DouYinCrawler.search]" in line:
+                        if re.search(r"page:\s*\d+ is empty", line):
+                            unconfirmed.append("搜索返回空列表，尚未确认结果；可查看详情后重试。")
+                        elif "Repeated page for keyword:" in line:
+                            unconfirmed.append("搜索分页重复，已停止翻页以避免循环；采集尚未确认完整。")
                     self.db.event(job["id"], line, level)
 
             reader = threading.Thread(target=read_output, daemon=True)
@@ -403,12 +410,18 @@ class Queue:
             if errors
             else (f"Worker exited with code {code}" if code else None)
         )
+        collection = crawl_status.read(directory, job["id"], job["attempt"])
         if cancelled:
             state = "cancelled"
         elif self.stop_event.is_set():
             state = "interrupted"
         elif code != 0:
             state = "partial" if count else "failed"
+        elif collection and collection["issues"] and job["options"]["crawler_type"] != "login":
+            state = "partial" if count else "interrupted"
+            reason = crawl_status.MESSAGES[collection["issues"][0]["reason"]]
+        elif not collection and unconfirmed and job["options"]["crawler_type"] != "login":
+            state, reason = ("partial" if count else "interrupted"), unconfirmed[-1]
         elif errors and job["options"]["crawler_type"] != "login":
             state = "partial" if count else "failed"
         else:
@@ -463,6 +476,8 @@ class Queue:
             "raw_directory": str(directory),
             "exit_code": code,
         }
+        if collection:
+            checkpoint["collection"] = collection
         self.db.execute(
             "UPDATE jobs SET state=?,pid=NULL,error=?,checkpoint=?,updated=? WHERE id=?",
             (state, reason, dump(checkpoint), now(), job["id"]),

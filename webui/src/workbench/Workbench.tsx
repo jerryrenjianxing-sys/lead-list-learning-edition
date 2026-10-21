@@ -28,6 +28,7 @@ const labels: Record<string, string> = {
   logging_in: "正在登录",
   stopping: "正在停止",
   completed: "已完成",
+  no_results: "无搜索结果",
   cancelled: "已停止",
   interrupted: "已中断",
   failed: "失败",
@@ -42,6 +43,11 @@ function Status({ value }: { value: string }) {
   return (
     <span className={`wb-status state-${value}`}>{labels[value] || value}</span>
   );
+}
+function jobStatus(job: Item): string {
+  if (job.state === "running" && job.options.crawler_type === "login") return "logging_in";
+  if (job.state === "completed" && job.checkpoint?.collection?.empty) return "no_results";
+  return job.state;
 }
 function ResourceFeedback({ title, state, retry }: { title: string; state?: ResourceStatus; retry: () => void }) {
   if (state?.error) return <div role="alert" className="wb-check-error">
@@ -414,14 +420,7 @@ export default function Workbench() {
                       )[j.options.crawler_type] ||
                       j.options.crawler_type}
                   </span>
-                  <Status
-                    value={
-                      j.state === "running" &&
-                      j.options.crawler_type === "login"
-                        ? "logging_in"
-                        : j.state
-                    }
-                  />
+                  <Status value={jobStatus(j)} />
                 </button>
               ))}
               {!jobs.length && sectionStates.jobs?.loaded && (
@@ -605,15 +604,11 @@ export default function Workbench() {
                     <small>
                       {date(j.created)} · 第 {j.attempt} 次运行
                     </small>
+                    {(j.checkpoint?.collection?.empty || j.checkpoint?.collection?.issues?.length > 0) && (
+                      <small>{j.checkpoint.collection.message}</small>
+                    )}
                   </button>
-                  <Status
-                    value={
-                      j.state === "running" &&
-                      j.options.crawler_type === "login"
-                        ? "logging_in"
-                        : j.state
-                    }
-                  />
+                  <Status value={jobStatus(j)} />
                   {["queued", "running"].includes(j.state) ? (
                     <button
                       disabled={busy}
@@ -664,6 +659,7 @@ export default function Workbench() {
                 </h2>
                 <p>
                   {jobs.find((j) => j.id === jobId)?.error ||
+                    jobs.find((j) => j.id === jobId)?.checkpoint?.collection?.message ||
                     "运行日志与已保存进度"}
                 </p>
                 <button onClick={() => QR(!qr)}>查看登录二维码</button>

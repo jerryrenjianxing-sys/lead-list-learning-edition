@@ -24,6 +24,11 @@ from httpx import RequestError
 class DataFetchError(RequestError):
     """something error when fetch"""
 
+    def __init__(self, message: str, *, request=None, reason: str = "request_failed", http_status: int | None = None):
+        super().__init__(message, request=request)
+        self.reason = reason
+        self.http_status = http_status
+
 
 class IPBlockError(RequestError):
     """fetch so fast that the server block us ip"""

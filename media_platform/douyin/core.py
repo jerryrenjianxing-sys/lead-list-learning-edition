@@ -40,6 +40,7 @@ from store import douyin as douyin_store
 from tools import utils
 from tools.cdp_browser import CDPBrowserManager
 from tools.lead_sink import LeadSink
+from tools import crawl_status
 from var import crawler_type_var, source_keyword_var
 
 from . import media as douyin_media
@@ -155,6 +156,7 @@ class DouYinCrawler(AbstractCrawler):
             crawl_limit = dy_limit_count
         start_page = config.START_PAGE  # start page number
         for keyword in config.KEYWORDS.split(","):
+            crawl_status.record("search", "started", scope=keyword)
             source_keyword_var.set(keyword)
             utils.logger.info(f"[DouYinCrawler.search] Current keyword: {keyword}")
             aweme_list: List[str] = []
@@ -177,10 +179,26 @@ class DouYinCrawler(AbstractCrawler):
                         publish_time=PublishTimeType(config.PUBLISH_TIME_TYPE),
                         search_id=dy_search_id,
                     )
-                    if posts_res.get("data") is None or posts_res.get("data") == []:
-                        utils.logger.info(f"[DouYinCrawler.search] search douyin keyword: {keyword}, page: {page} is empty,{posts_res.get('data')}`")
+                    if isinstance(posts_res, dict) and posts_res.get("status_code") not in (None, 0, "0"):
+                        crawl_status.record("search", "platform_error", scope=keyword, page=page, response=posts_res)
+                        utils.logger.warning("[DouYinCrawler.search] Platform returned a business error; search incomplete")
                         break
-                except DataFetchError:
+                    if not isinstance(posts_res, dict) or not isinstance(posts_res.get("data"), list):
+                        crawl_status.record("search", "response_unconfirmed", scope=keyword, page=page, response=posts_res)
+                        utils.logger.warning("[DouYinCrawler.search] Search response is incomplete; result unconfirmed")
+                        break
+                    if not posts_res["data"]:
+                        normal_end = (
+                            type(posts_res.get("status_code")) in (int, str)
+                            and posts_res.get("status_code") in (0, "0")
+                            and posts_res.get("has_more") in (0, False, "0")
+                        )
+                        reason = ("source_exhausted" if aweme_list else "no_results") if normal_end else "empty_unconfirmed"
+                        crawl_status.record("search", reason, scope=keyword, page=page, response=posts_res)
+                        utils.logger.info(f"[DouYinCrawler.search] Search stopped: {reason}")
+                        break
+                except DataFetchError as exc:
+                    crawl_status.record("search", exc.reason, scope=keyword, page=page, response={"http_status": exc.http_status})
                     utils.logger.error(f"[DouYinCrawler.search] search douyin keyword: {keyword} failed")
                     break
 
@@ -201,6 +219,7 @@ class DouYinCrawler(AbstractCrawler):
                     for aweme_info in page_aweme_items
                 ]
                 if not utils.register_page_ids(seen_page_ids, page_aweme_list):
+                    crawl_status.record("search", "pagination_stalled", scope=keyword, page=page - 1, response=posts_res)
                     utils.logger.warning(
                         f"[DouYinCrawler.search] Repeated page for keyword:{keyword}, page:{page - 1}; stopping pagination"
                     )
@@ -224,12 +243,18 @@ class DouYinCrawler(AbstractCrawler):
                 
                 # Batch get note comments for the current page
                 await self.batch_get_note_comments(page_aweme_list)
-                if not posts_res.get("has_more", False):
+                if posts_res.get("has_more") in (0, False, "0"):
+                    crawl_status.record("search", "source_exhausted", scope=keyword, page=page - 1, response=posts_res)
+                    break
+                if posts_res.get("has_more") not in (1, True, "1"):
+                    crawl_status.record("search", "response_unconfirmed", scope=keyword, page=page - 1, response=posts_res)
                     break
 
                 # Sleep after each page navigation
                 await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
                 utils.logger.info(f"[DouYinCrawler.search] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}")
+            else:
+                crawl_status.record("search", "limit_reached", scope=keyword, page=page - 1)
             utils.logger.info(f"[DouYinCrawler.search] keyword:{keyword}, aweme_list:{aweme_list}")
 
     async def get_specified_awemes(self):
@@ -341,6 +366,7 @@ class DouYinCrawler(AbstractCrawler):
                 utils.logger.info(f"[DouYinCrawler.get_comments] Sleeping for {crawl_interval} seconds after fetching comments for aweme {aweme_id}")
                 utils.logger.info(f"[DouYinCrawler.get_comments] aweme_id: {aweme_id} comments have all been obtained and filtered ...")
             except DataFetchError as e:
+                crawl_status.record("comments", e.reason, scope=aweme_id, response={"http_status": e.http_status})
                 utils.logger.error(f"[DouYinCrawler.get_comments] aweme_id: {aweme_id} get comments failed, error: {e}")
             except Exception:
                 raise

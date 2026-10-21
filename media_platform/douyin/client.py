@@ -29,7 +29,7 @@ from playwright.async_api import BrowserContext
 import config
 from base.base_crawler import AbstractApiClient
 from proxy.proxy_mixin import ProxyRefreshMixin
-from tools import utils
+from tools import utils, crawl_status
 from tools.httpx_util import make_async_client
 from var import request_keyword_var
 
@@ -43,6 +43,23 @@ from .help import *
 # 抖音边缘网关 ArgusSecurityPlugin 要求的请求头。网关目前不校验取值，
 # 传固定字符串即可；将来若开始真校验，会重新出现 "Signature Not Found"。
 DOUYIN_ARGUS_HEADER_VALUE = "1"
+
+
+def _comment_page(response: object) -> tuple[list[Dict], bool, Optional[str]]:
+    if not isinstance(response, dict):
+        return [], False, "response_unconfirmed"
+    if response.get("status_code") not in (None, 0, "0"):
+        return [], False, "platform_error"
+    if "comments" not in response or (
+        response["comments"] is not None and not isinstance(response["comments"], list)
+    ):
+        return [], False, "response_unconfirmed"
+    comments = response["comments"] or []
+    if response.get("has_more") not in (0, 1, False, True, "0", "1"):
+        return comments, False, "response_unconfirmed"
+    if not response["comments"] and response["has_more"] in (1, True, "1"):
+        return [], False, "empty_unconfirmed"
+    return comments, response["has_more"] in (1, True, "1"), None
 
 
 class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
@@ -151,13 +168,32 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
                         request=exc.request,
                     ) from exc
                 await asyncio.sleep(1)
+        status = response.status_code
+        if status >= 400:
+            raise DataFetchError(
+                f"平台请求返回 HTTP {status}，尚未确认账号状态。",
+                reason="http_error", http_status=status,
+            )
+        if not response.text.strip():
+            raise DataFetchError(
+                f"平台返回空响应（HTTP {status}），尚未确认账号状态。",
+                reason="empty_response", http_status=status,
+            )
+        if response.text.strip() == "blocked":
+            raise DataFetchError(
+                f"平台拒绝了本次请求（HTTP {status}），尚未确认账号状态。",
+                reason="request_rejected", http_status=status,
+            )
         try:
-            if response.text == "" or response.text == "blocked":
-                utils.logger.error(f"request params incrr, response.text: {response.text}")
-                raise Exception("account blocked")
-            return response.json()
-        except Exception as e:
-            raise DataFetchError(f"{e}, {response.text}")
+            result = response.json()
+        except ValueError as exc:
+            raise DataFetchError(
+                f"平台返回非 JSON 响应（HTTP {status}），尚未确认账号状态。",
+                reason="non_json_response", http_status=status,
+            ) from exc
+        if not isinstance(result, dict):
+            raise DataFetchError("平台返回的 JSON 结构不完整。", reason="response_unconfirmed", http_status=status)
+        return result
 
     async def get(self, uri: str, params: Optional[Dict] = None, headers: Optional[Dict] = None):
         """
@@ -308,12 +344,14 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         seen_comment_ids = set()
         comments_has_more = 1
         comments_cursor = 0
+        stop_reason = None
+        comments_res = {}
+        crawl_status.record("comments", "started", scope=aweme_id)
         while comments_has_more and not utils.crawl_limit_reached(len(result), max_count):
             request_cursor = comments_cursor
             comments_res = await self.get_aweme_comments(aweme_id, comments_cursor)
-            comments_has_more = comments_res.get("has_more", 0)
-            comments_cursor = comments_res.get("cursor", 0)
-            comments = comments_res.get("comments", [])
+            comments, comments_has_more, stop_reason = _comment_page(comments_res)
+            comments_cursor = comments_res.get("cursor", 0) if isinstance(comments_res, dict) else 0
             if not comments:
                 break
             page_comment_ids = [str(comment.get("cid") or "") for comment in comments]
@@ -325,6 +363,7 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
             if any(page_comment_ids) and not utils.register_page_ids(
                 seen_comment_ids, page_comment_ids
             ):
+                stop_reason = "pagination_stalled"
                 break
             comments = new_comments
             cursor_stalled = comments_has_more and comments_cursor == request_cursor
@@ -337,24 +376,32 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
             await asyncio.sleep(crawl_interval)
             if not is_fetch_sub_comments:
                 if cursor_stalled:
+                    stop_reason = "limit_reached" if utils.crawl_limit_reached(len(result), max_count) else "pagination_stalled"
                     break
                 continue
             # Get secondary reviews
             for comment in comments:
                 reply_comment_total = comment.get("reply_comment_total")
 
-                if reply_comment_total > 0:
+                if reply_comment_total and reply_comment_total > 0:
                     comment_id = comment.get("cid")
                     sub_comments_has_more = 1
                     sub_comments_cursor = 0
                     seen_sub_comment_ids = set()
+                    reply_reason = None
+                    sub_comments_res = {}
+                    reply_scope = f"{aweme_id}:{comment_id}"
+                    crawl_status.record("replies", "started", scope=reply_scope)
 
                     while sub_comments_has_more:
                         request_sub_cursor = sub_comments_cursor
-                        sub_comments_res = await self.get_sub_comments(aweme_id, comment_id, sub_comments_cursor)
-                        sub_comments_has_more = sub_comments_res.get("has_more", 0)
-                        sub_comments_cursor = sub_comments_res.get("cursor", 0)
-                        sub_comments = sub_comments_res.get("comments", [])
+                        try:
+                            sub_comments_res = await self.get_sub_comments(aweme_id, comment_id, sub_comments_cursor)
+                        except DataFetchError as exc:
+                            crawl_status.record("replies", exc.reason, scope=reply_scope, response={"http_status": exc.http_status})
+                            raise
+                        sub_comments, sub_comments_has_more, reply_reason = _comment_page(sub_comments_res)
+                        sub_comments_cursor = sub_comments_res.get("cursor", 0) if isinstance(sub_comments_res, dict) else 0
 
                         if not sub_comments:
                             break
@@ -373,6 +420,7 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
                         if any(page_sub_comment_ids) and not utils.register_page_ids(
                             seen_sub_comment_ids, page_sub_comment_ids
                         ):
+                            reply_reason = "pagination_stalled"
                             break
                         sub_comments = new_sub_comments
                         sub_cursor_stalled = (
@@ -384,9 +432,15 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
                             await callback(aweme_id, sub_comments)
                         await asyncio.sleep(crawl_interval)
                         if sub_cursor_stalled:
+                            reply_reason = "pagination_stalled"
                             break
+                    crawl_status.record("replies", reply_reason or "source_exhausted", scope=reply_scope, response=sub_comments_res)
             if cursor_stalled:
+                stop_reason = "limit_reached" if utils.crawl_limit_reached(len(result), max_count) else "pagination_stalled"
                 break
+        if not stop_reason:
+            stop_reason = "source_exhausted" if not comments_has_more else "limit_reached"
+        crawl_status.record("comments", stop_reason, scope=aweme_id, response=comments_res)
         return result
 
     async def get_user_info(self, sec_user_id: str):

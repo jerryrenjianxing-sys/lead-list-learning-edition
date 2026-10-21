@@ -36,7 +36,7 @@ async function main() {
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
     const errors = [];
-    let failDiagnostics = false, failJobs = false, datasetsOnly = false;
+    let failDiagnostics = false, failJobs = false, datasetsOnly = false, jobMode = 'normal';
     let savedBrowserPath = 'C:/fixture-only/Chrome.exe', releaseSettingsSave;
     const unrelatedReads = [];
     page.on('pageerror', error => errors.push(error.message));
@@ -55,7 +55,7 @@ async function main() {
       const fixtures = {
         '/session': { token: 'fixture-only-no-user-credential' },
         '/health': { version: '0.4.0-test' },
-        '/jobs': { items: [{ id: 'fixture-job', platform: 'wb', options: { keywords: '夹具关键词', crawler_type: 'search' }, state: 'completed', created: '2026-10-19T01:00:00Z', attempt: 1 }], archived_count: 0 },
+        '/jobs': { items: [{ id: 'fixture-job', platform: 'wb', options: { keywords: '夹具关键词', crawler_type: 'search' }, state: jobMode === 'unconfirmed' ? 'interrupted' : 'completed', checkpoint: { collection: { empty: jobMode === 'empty', message: jobMode === 'unconfirmed' ? '平台返回空列表，尚未确认结果。' : '平台本轮返回无搜索结果。', issues: jobMode === 'unconfirmed' ? [{ reason: 'empty_unconfirmed' }] : [] } }, created: '2026-10-19T01:00:00Z', attempt: 1 }], archived_count: 0 },
         '/datasets': { items: [{ id: 'fixture-data', name: '夹具数据集', record_count: 37, created: '2026-10-19T01:00:00Z' }] },
         '/analyses': { items: [] },
         '/platforms': { items: [{ id: 'dy', name: '抖音', can_select: true, login_state: 'authenticated' }] },
@@ -122,6 +122,14 @@ async function main() {
     assert.equal(await page.getByLabel('关键词（多个用逗号分隔）').inputValue(), '用户正在编辑的关键词');
     assert.equal(await checkbox.isChecked(), false);
     checks.push('A failed task refresh retains existing tasks, input and manual platform selection');
+    failJobs = false;
+    jobMode = 'empty';
+    await until(() => page.getByText('无搜索结果', { exact: true }).count(), 'A normal empty result must be distinct from collected data');
+    jobMode = 'unconfirmed';
+    await until(() => page.getByText('平台返回空列表，尚未确认结果。', { exact: true }).count(), 'An unconfirmed stop must show its reason beside the task');
+    assert.equal(await page.getByText('无搜索结果', { exact: true }).count(), 0);
+    assert.equal(await page.getByText('已中断', { exact: true }).count(), 1);
+    checks.push('Normal empty search and unconfirmed collection have distinct visible outcomes');
     assert.deepEqual(errors, []);
     const directory = path.join(repo, '.cache/architecture-meeting');
     await fs.mkdir(directory, { recursive: true });

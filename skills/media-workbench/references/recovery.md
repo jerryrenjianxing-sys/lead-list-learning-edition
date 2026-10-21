@@ -9,6 +9,7 @@
 - Windows 使用MD文件中的原生 `python.exe` 加现成 Python 客户端；PowerShell 脚本只是兼容入口，不要求修改全局执行策略。WSL 中的 Agent 需要通过本机可用的 Windows 工具与正确 Windows 路径调用；纯云端 Agent 无法直接访问用户电脑的 localhost 或本机文件，说明实际限制，不把本地后台开放到公网。
 - 请求超时：保留客户端输出的 request_id，执行 `receipt ID`。已登记时使用原响应；未登记时用相同 request_id 和原请求内容重试。改变请求内容必须换编号。
 - job interrupted/cancelled/partial/failed：先读 events 和 checkpoint，修复实际原因，再 resume。保存的数据会去重；通用采集恢复会重新经过部分已抓页面，不宣称所有平台都有精确游标续跑。
+- 抖音采集结束：有 `checkpoint.collection` 时读取具体停止原因、运行次数和响应摘要。`no_results` 表示平台本轮正常返回空结果；`source_exhausted` 表示接口本轮没有下一页，均不能证明全站采全或排除限制。`issues` 表示存在未确认或失败范围。仅凭completed、空列表或旧日志中的account blocked不能断言采集成功、真实无结果或账号被封；旧版缺少摘要时按日志说明证据局限。尊重用户的重试安排，历史批量测试不自动重跑。
 - needs_login：提示用户在“平台登录”完成登录或验证。同账号验证且保存成功后，后台自动继续原任务及原数据集；先查询状态，避免重复创建。账号不一致或无法确认时由用户在页面确认继续，主动停止的任务不会自动续接。
 - last_check 为 network_error/unknown：账号和最近成功记录仍保留，不能报告为正常在线，也不要要求重新扫码；网络恢复后重试原任务。session_status 为 failed 表示登录可能有效但保存未完成，软件的“更多操作 → 重试保存”会重新检查并保存。
 - 登录信息保存在专用浏览器档案及 Windows 用户加密文件中。不要读取、输出或传送这些凭据；清理任务记录不会清除账号。只有用户明确要移除账号时才使用“忘记此账号”。
