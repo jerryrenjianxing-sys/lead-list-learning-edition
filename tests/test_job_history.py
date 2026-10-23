@@ -13,7 +13,7 @@ def test_clear_preserves_data_auth_logs_and_is_reversible(tmp_path):
     with TestClient(app) as c:
         c.get("/api/v1/session")
         job = c.post(
-            "/api/v1/jobs", json={"platform": "dy", "keywords": "sample"}
+            "/api/v1/jobs", json={'retry_threshold': None, "platform": "dy", "keywords": "sample"}
         ).json()
         db = app.state.db
         Queue(db)._claim()
@@ -25,7 +25,7 @@ def test_clear_preserves_data_auth_logs_and_is_reversible(tmp_path):
         )
         db.execute("UPDATE jobs SET state='failed' WHERE id=?", (job["id"],))
         active = c.post(
-            "/api/v1/jobs", json={"platform": "xhs", "keywords": "still queued"}
+            "/api/v1/jobs", json={'retry_threshold': None, "platform": "xhs", "keywords": "still queued"}
         ).json()
         key = {"Idempotency-Key": "cleanup"}
         cleared = c.post("/api/v1/jobs/clear-history", json={}, headers=key).json()
@@ -67,10 +67,10 @@ def test_active_explicit_cleanup_is_atomic_and_unknown_id_rejected(tmp_path):
     app = make_app(tmp_path, run_queue=False)
     with TestClient(app) as c:
         c.get("/api/v1/session")
-        a = c.post("/api/v1/jobs", json={"platform": "dy", "keywords": "a"}).json()[
+        a = c.post("/api/v1/jobs", json={'retry_threshold': None, "platform": "dy", "keywords": "a"}).json()[
             "id"
         ]
-        b = c.post("/api/v1/jobs", json={"platform": "dy", "keywords": "b"}).json()[
+        b = c.post("/api/v1/jobs", json={'retry_threshold': None, "platform": "dy", "keywords": "b"}).json()[
             "id"
         ]
         c.post("/api/v1/jobs/" + a + "/stop", json={})
@@ -104,5 +104,5 @@ def test_v2_migration_backs_up_and_keeps_login(tmp_path):
     backup = next((tmp_path / "backups").glob("*.sqlite3"))
     with sqlite3.connect(backup) as con:
         assert con.execute("PRAGMA user_version").fetchone()[0] == 2
-    assert db.query("PRAGMA user_version")[0]["user_version"] == 5
+    assert db.query("PRAGMA user_version")[0]["user_version"] == 6
     assert db.query("SELECT value FROM settings")[0]["value"] == "123"

@@ -15,7 +15,8 @@ from .auth import active_login, update as auth_update, finish_progress
 from tools import crawl_status
 from . import recovery
 
-TERMINAL = {"completed", "partial", "failed", "cancelled", "interrupted", "needs_login", "waiting_access"}
+TERMINAL = {"completed", "partial", "failed", "cancelled", "interrupted", "needs_login", "waiting_access", "waiting_retry"}
+CLAIM_ORDER = "(json_extract(options,'$.crawler_type')='login') DESC,COALESCE((SELECT MAX(a.started) FROM job_attempts a WHERE a.job_id=jobs.id),created),created,id"
 PLATFORMS = {
     "xhs": "小红书",
     "dy": "抖音",
@@ -89,6 +90,9 @@ def create_job(con, options):
             (identity, stamp, stamp),
         )
     result = {"id": identity, "state": "queued", "dataset_id": dataset_id}
+    if options.get('crawler_type')=='search' and options.get('retry_threshold') is not None:
+        from .retrying import configure
+        configure(con,identity,{'threshold':options['retry_threshold'],'schedule':False})
     if options['crawler_type'] == 'login':
         result['operation_id'] = recovery.session_operation(con, identity)
     return result
@@ -99,6 +103,7 @@ def control(con, job_id, action):
     if not row:
         raise Missing(job_id)
     if action == "stop":
+        con.execute('UPDATE job_retry_plans SET enabled=0,next_retry_at=NULL,updated=? WHERE job_id=?',(now(),job_id))
         con.execute("UPDATE auth_pauses SET enabled=0 WHERE job_id=?", (job_id,))
         con.execute("UPDATE access_waits SET enabled=0 WHERE job_id=?",(job_id,))
         con.execute("UPDATE operations SET state=CASE WHEN state='running' THEN 'cancelling' ELSE 'cancelled' END,updated=?,result=? WHERE id IN (SELECT operation_id FROM access_checks WHERE source_job=?) AND state IN ('accepted','running')",
@@ -122,6 +127,7 @@ def control(con, job_id, action):
                 "Only an interrupted, stopped, partial, or failed task can resume"
             )
         state = "queued"
+        con.execute('UPDATE job_retry_plans SET enabled=1,next_retry_at=NULL,updated=? WHERE job_id=?',(now(),job_id))
         con.execute("UPDATE auth_pauses SET enabled=0 WHERE job_id=?", (job_id,))
         # Explicit resume does not bypass an unresolved capability block.
         from .availability import Availability
@@ -131,6 +137,7 @@ def control(con, job_id, action):
             raise Conflict('对应平台能力尚未恢复，请查看状态并等待复查；重新登录不会清除冷却。')
         con.execute('UPDATE access_waits SET enabled=0 WHERE job_id=?',(job_id,))
         con.execute('DELETE FROM access_replays WHERE job_id=?',(job_id,))
+        con.execute('UPDATE job_retry_plans SET account_id=? WHERE job_id=?',(account or None,job_id))
         options = json.loads(row["options"])
         options.pop("enable_media", None)
         con.execute("UPDATE jobs SET options=? WHERE id=?", (dump(options), job_id))
@@ -159,7 +166,7 @@ def clear_history(con, ids=None, *, restore=False):
             "DELETE FROM job_history_archive WHERE job_id=?", [(id,) for id in selected]
         )
     else:
-        resumable={r[0] for r in con.execute("SELECT j.id FROM jobs j WHERE j.state IN ('needs_login','waiting_access') AND (EXISTS(SELECT 1 FROM auth_pauses p WHERE p.job_id=j.id AND p.enabled=1) OR EXISTS(SELECT 1 FROM access_waits w WHERE w.job_id=j.id AND w.enabled=1))")}
+        resumable={r[0] for r in con.execute("SELECT j.id FROM jobs j WHERE (j.state IN ('needs_login','waiting_access') AND (EXISTS(SELECT 1 FROM auth_pauses p WHERE p.job_id=j.id AND p.enabled=1) OR EXISTS(SELECT 1 FROM access_waits w WHERE w.job_id=j.id AND w.enabled=1))) OR (j.state='waiting_retry' AND EXISTS(SELECT 1 FROM job_retry_plans p WHERE p.job_id=j.id AND p.enabled=1))")}
         if ids is not None and resumable.intersection(ids):
             raise Conflict('任务仍在等待自动续接，请先停止自动续接再清理记录。')
         rows = con.execute(
@@ -258,10 +265,12 @@ class Queue:
             con.execute("BEGIN IMMEDIATE")
             if not self.db.accept_writes:
                 return None
+            from .retrying import release_due
+            release_due(con)
             if con.execute("SELECT 1 FROM operations WHERE kind='probe' AND state IN ('running','cancelling') LIMIT 1").fetchone():
                 return None
             row = con.execute(
-                "SELECT * FROM jobs WHERE state='queued' ORDER BY (json_extract(options,'$.crawler_type')='login') DESC,created,id LIMIT 1"
+                "SELECT * FROM jobs WHERE state='queued' ORDER BY "+CLAIM_ORDER+" LIMIT 1"
             ).fetchone()
             while row and json.loads(row['options'])['crawler_type']!='login':
                 account=self.availability._session(con,row['platform'])['account_id'] or ''
@@ -270,7 +279,7 @@ class Queue:
                 for block in blocks:
                     self.availability.pause(con,dict(row)|{'options':json.loads(row['options'])},block['capability'],'existing_block')
                 con.execute("UPDATE jobs SET state='waiting_access',updated=? WHERE id=?",(now(),row['id']))
-                row=con.execute("SELECT * FROM jobs WHERE state='queued' ORDER BY (json_extract(options,'$.crawler_type')='login') DESC,created,id LIMIT 1").fetchone()
+                row=con.execute("SELECT * FROM jobs WHERE state='queued' ORDER BY "+CLAIM_ORDER+" LIMIT 1").fetchone()
             if row:
                 options = json.loads(row["options"])
                 options.pop("enable_media", None)

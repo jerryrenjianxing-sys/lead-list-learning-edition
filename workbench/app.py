@@ -36,6 +36,7 @@ from .models import (
     JobHistoryRequest,
     SelfTestRequest,
     ProbeRequest,
+    RetryPlanRequest,
 )
 from .paths import ROOT, PRODUCT, DISPLAY_NAME, data_root, discovery_path
 from .queue import Queue, PLATFORMS, create_job, control, job_view, clear_history
@@ -306,6 +307,12 @@ def make_app(root=None, *, run_queue=True):
     @app.get("/api/v1/jobs/{job_id}")
     def job(job_id: str):
         return job_view(db.one("jobs", job_id), db)
+
+    @app.post('/api/v1/jobs/{job_id}/retry-plan')
+    def retry_plan(job_id: str, body: RetryPlanRequest, request: Request):
+        from .retrying import configure
+        values=body.model_dump()
+        return write(request,values,lambda con:configure(con,job_id,values))
 
     @app.post("/api/v1/jobs/{job_id}/{action}")
     def job_control(job_id: str, action: str, request: Request):

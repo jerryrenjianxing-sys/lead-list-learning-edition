@@ -43,7 +43,7 @@ def test_old_clients_cannot_request_media(endpoint, tmp_path):
 @pytest.mark.parametrize("state", ["queued", "cancelled"])
 def test_old_jobs_discard_download_setting_and_keep_other_options(state, tmp_path):
     db = Database(tmp_path)
-    options = CrawlRequest(
+    options = CrawlRequest(retry_threshold=None,
         platform="dy",
         keywords="sample",
         enable_comments=True,
@@ -87,7 +87,7 @@ def test_worker_overrides_old_job_and_enabled_upstream_default(
             monkeypatch.setattr(config, key, value)
     monkeypatch.setattr(config, "ENABLE_GET_MEDIA", True)
     db = Database(tmp_path)
-    options = CrawlRequest(platform=platform, keywords="sample").model_dump()
+    options = CrawlRequest(retry_threshold=None, platform=platform, keywords="sample").model_dump()
     job = db.write(None, "create", options, lambda con: create_job(con, options))
     db.execute(
         "UPDATE jobs SET options=? WHERE id=?",

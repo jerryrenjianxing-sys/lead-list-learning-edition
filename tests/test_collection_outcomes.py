@@ -26,7 +26,8 @@ def crawl_search(tmp_path, scenario, resume_job_id=None):
         response = client.post(
             "/api/v1/jobs/" + resume_job_id + "/resume" if resume_job_id else "/api/v1/jobs",
             json={} if resume_job_id else {
-                "platform": "dy", "keywords": "AI Agent", "max_notes_count": scenario.get("limit", 0)
+                "platform": "dy", "keywords": "AI Agent", "max_notes_count": scenario.get("limit", 0),
+                "retry_threshold": None,
             },
         )
         assert response.status_code == 200, response.text
@@ -225,7 +226,7 @@ def test_captured_empty_search_is_not_reported_as_success(tmp_path):
         client.get("/api/v1/session")
         created = client.post(
             "/api/v1/jobs",
-            json={"platform": "dy", "keywords": "AI Agent", "max_notes_count": 0},
+            json={'retry_threshold': None, "platform": "dy", "keywords": "AI Agent", "max_notes_count": 0},
         )
         assert created.status_code == 200, created.text
         job_id = created.json()["id"]

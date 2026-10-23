@@ -271,7 +271,7 @@ class Runner:
         from .models import CrawlRequest
         from .queue import Queue, create_job
         db = Database(self.directory / "queue")
-        result = db.write(None, "self-test", {}, lambda con: create_job(con, CrawlRequest(platform="wb", keywords="synthetic").model_dump()))
+        result = db.write(None, "self-test", {}, lambda con: create_job(con, CrawlRequest(platform="wb", keywords="synthetic", retry_threshold=None).model_dump()))
         assert db.one("jobs", result["id"])["state"] == "queued"
         queue = Queue(db, worker_command=lambda identity: [sys.executable, "-m", "workbench.selftest_runner", "--fixture", identity])
         queue.start()

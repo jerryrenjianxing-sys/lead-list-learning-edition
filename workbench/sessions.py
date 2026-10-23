@@ -79,7 +79,7 @@ class SessionManager:
         if not self.ready.wait(5):
             raise RuntimeError("浏览器管理器启动超时，请重试。")
 
-    def call(self, operation, *, timeout=100, **kwargs):
+    def call(self, operation, /, *, timeout=100, **kwargs):
         self._start()
 
         async def serialized():

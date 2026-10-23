@@ -14,6 +14,22 @@ class ProbeRequest(BaseModel):
     capability: Literal['search','detail','creator','comments','replies','profile']
 
 
+class RetryPlanRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    enabled: bool = True
+    threshold: int = Field(100, ge=0)
+    min_seconds: int = Field(5400, ge=60)
+    max_seconds: int = Field(7200, ge=60)
+    next_retry_at: float | None = Field(None, gt=0)
+    schedule: bool = True
+
+    @model_validator(mode='after')
+    def valid_interval(self):
+        if self.max_seconds < self.min_seconds:
+            raise ValueError('max_seconds must be at least min_seconds')
+        return self
+
+
 class CrawlRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     platform: Platform
@@ -31,6 +47,7 @@ class CrawlRequest(BaseModel):
     enrich_profiles: bool = False
     headless: bool = False
     session_action: Literal["login", "check", "open"] = "login"
+    retry_threshold: int | None = Field(100, ge=0)
 
     @model_validator(mode="before")
     @classmethod
@@ -42,6 +59,8 @@ class CrawlRequest(BaseModel):
 
     @model_validator(mode="after")
     def inputs(self):
+        if self.crawler_type != 'search':
+            self.retry_threshold = None
         if self.crawler_type == "login":
             self.keywords = self.specified_ids = self.creator_ids = ""
             self.enable_comments = self.enable_sub_comments = self.enrich_profiles = (

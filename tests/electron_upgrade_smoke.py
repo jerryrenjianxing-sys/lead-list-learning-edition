@@ -251,7 +251,7 @@ def preserved(data,before):
     assert added<=RECOVERY_TABLES,'Migration created an unrecognized business table'
     if added:
         with closing(sqlite3.connect(data/'workbench.sqlite3')) as con:
-            assert con.execute('PRAGMA user_version').fetchone()[0]==5
+            assert con.execute('PRAGMA user_version').fetchone()[0]==6
         backups=list((data/'backups').glob('*.sqlite3'))
         backed_up=False
         for path in backups:

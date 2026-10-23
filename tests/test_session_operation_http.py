@@ -148,7 +148,7 @@ else:report('authenticated',state='authenticated')
         ) as client:
             created = client.post(
                 "/api/v1/jobs",
-                json={"platform": "dy", "crawler_type": mode, "keywords": "synthetic"},
+                json={'retry_threshold': None, "platform": "dy", "crawler_type": mode, "keywords": "synthetic"},
             ).json()
             deadline = time.monotonic() + 20
             while time.monotonic() < deadline:

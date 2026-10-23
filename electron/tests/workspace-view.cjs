@@ -62,7 +62,7 @@ async function main() {
       const fixtures = {
         '/session': { token: 'fixture-only-no-user-credential' },
         '/health': { version: '0.4.0-test' },
-        '/jobs': { items: [{ id: 'fixture-job', platform: 'wb', options: { keywords: '夹具关键词', crawler_type: 'search' }, state: jobMode === 'waiting' ? 'waiting_access' : jobMode === 'cancelled' ? 'cancelled' : jobMode === 'unconfirmed' ? 'interrupted' : 'completed', status_detail: jobMode === 'waiting' ? { counts: { inserted: 1, updated: 2, unchanged: 3, dataset_total: 20 }, range_verified: false, explanation: '夹具：评论等待访问恢复，搜索状态保持独立。', next_actions: [{ id: 'stop', label: '停止自动续接', enabled: true }] } : undefined, checkpoint: { collection: { empty: jobMode === 'empty', message: jobMode === 'unconfirmed' ? '平台返回空列表，尚未确认结果。' : '平台本轮返回无搜索结果。', issues: jobMode === 'unconfirmed' ? [{ reason: 'empty_unconfirmed' }] : [] } }, created: '2026-10-19T01:00:00Z', attempt: jobMode === 'waiting' ? 2 : 1 }], archived_count: 0 },
+        '/jobs': { items: [{ id: 'fixture-job', platform: 'wb', options: { keywords: '夹具关键词', crawler_type: 'search' }, state: jobMode === 'retry' ? 'waiting_retry' : jobMode === 'waiting' ? 'waiting_access' : jobMode === 'cancelled' ? 'cancelled' : jobMode === 'unconfirmed' ? 'interrupted' : 'completed', status_detail: ['waiting', 'retry'].includes(jobMode) ? { next_retry_at: jobMode === 'retry' ? '2026-10-23T02:58:00Z' : null, retry: jobMode === 'retry' ? { enabled: 1, threshold: 100 } : null, counts: { inserted: 1, updated: 2, unchanged: 3, dataset_total: 20 }, range_verified: false, explanation: '夹具：评论等待访问恢复，搜索状态保持独立。', next_actions: [{ id: 'stop', label: '停止自动续接', enabled: true }] } : undefined, checkpoint: { collection: { empty: jobMode === 'empty', message: jobMode === 'unconfirmed' ? '平台返回空列表，尚未确认结果。' : '平台本轮返回无搜索结果。', issues: jobMode === 'unconfirmed' ? [{ reason: 'empty_unconfirmed' }] : [] } }, created: '2026-10-19T01:00:00Z', attempt: jobMode === 'waiting' ? 2 : 1 }], archived_count: 0 },
         '/datasets': { items: [{ id: 'fixture-data', name: '夹具数据集', record_count: 37, created: '2026-10-19T01:00:00Z' }] },
         '/analyses': { items: [] },
         '/platforms': { items: [{ id: 'dy', name: '抖音', can_select: true, login_state: 'authenticated' }] },
@@ -132,6 +132,16 @@ async function main() {
     failJobs = false;
     jobMode = 'empty';
     await until(() => page.getByText('无搜索结果', { exact: true }).count(), 'A normal empty result must be distinct from collected data');
+    jobMode = 'retry';
+    await page.getByText('等待重试', { exact: true }).waitFor();
+    await page.getByText('下次重试：', { exact: false }).waitFor();
+    assert.equal(await page.getByText(/不超过 100 条视为未跑通/).count(), 1);
+    assert.equal(await page.getByRole('button', { name: '停止自动续接', exact: true }).count(), 1);
+    assert.equal(await page.getByText('无搜索结果', { exact: true }).count(), 0);
+    const retryShots = path.join(repo, '.cache/native-retry-ui');
+    await fs.mkdir(retryShots, { recursive: true });
+    await page.screenshot({ path: path.join(retryShots, 'waiting-retry.png'), fullPage: true });
+    checks.push('Persisted retry state shows its next time and the inclusive 100-record threshold');
     jobMode = 'unconfirmed';
     await until(() => page.getByText('平台返回空列表，尚未确认结果。', { exact: true }).count(), 'An unconfirmed stop must show its reason beside the task');
     assert.equal(await page.getByText('无搜索结果', { exact: true }).count(), 0);

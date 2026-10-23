@@ -39,3 +39,10 @@ POST `/platforms/{platform}/session/check` 检查并保存现有登录，`/sessi
 GET/PUT `/settings` 支持 browser_path、theme、update_feed；GET `/artifacts` 列出成果；POST `/backup` 创建数据库备份；POST `/imports/legacy` 的 `{"path":"旧数据目录绝对路径"}` 导入旧版数据且不修改源文件。POST `/demo` 导入合成演示数据。
 
 以上是接口示例，用户可组合为任意分析流程。软件没有内置模型或固定业务判断器。
+
+
+## 0.5.2 原生重试计划
+
+搜索任务默认`retry_threshold: 100`：同一数据集累计去重内容、评论和回复不超过100条视为未跑通，随机等待90–120分钟，继续原任务及原数据集。`retry_threshold: null`显式关闭此规则；它是判定阈值，不是采集数量上限。登录及其他任务类型不使用此阈值。
+
+`POST /jobs/{id}/retry-plan`：`{"enabled":true,"threshold":100,"min_seconds":5400,"max_seconds":7200,"schedule":true}`。可选`next_retry_at`为UTC Unix秒，用于接续已保存的等待；`schedule:false`只保存规则，不主动停止当前执行。每轮随机结果持久保存，重开不重抽。状态为`waiting_retry`，`status_detail.next_retry_at`给出UTC ISO时间，`status_detail.retry`给出规则。`stop`真正取消自动续接；`resume`显式立即恢复，原生访问和认证限制仍有效。不要再用`stop`接口表达系统安排的定时等待，也不要为同一关键词反复新建数据集。
