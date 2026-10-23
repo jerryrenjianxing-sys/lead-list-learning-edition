@@ -1,6 +1,7 @@
 """Retry plans are visible through the real authenticated job API and queue."""
 import time
 import sys
+import json
 from contextlib import contextmanager
 from datetime import datetime
 
@@ -39,6 +40,19 @@ import os,time,pathlib
 stop=pathlib.Path(os.environ['MEDIAWORKBENCH_LOGIN_DIR'])/'.stop'
 while not stop.exists(): time.sleep(.01)
 """
+
+
+def complete_early_control(client,job_id):
+    view=client.get('/api/v1/jobs/'+job_id).json()
+    operation=view['status_detail']['operation_refs'][0]
+    assert client.post('/api/v1/operations/'+operation+'/cancel',json={}).status_code==200
+    control=client.post('/api/v1/platforms/dy/probes',json={'capability':'search'}).json()
+    end=time.monotonic()+5
+    while time.monotonic()<end:
+        result=client.get('/api/v1/operations/'+control['id']).json()
+        if result['state']=='completed':break
+        time.sleep(.02)
+    assert result['verdict']=='available'
 
 
 def test_profiles_cannot_satisfy_content_comment_reply_threshold(tmp_path):
@@ -100,21 +114,57 @@ def test_control_success_does_not_bypass_target_replay_limit(tmp_path,monkeypatc
         for attempt in (1,2):
             view=wait_job(c,job['id'],lambda j:j['attempt']==attempt and j['state']=='waiting_retry')
             if early_control and attempt==1:
-                operation=view['status_detail']['operation_refs'][0]
-                assert c.post('/api/v1/operations/'+operation+'/cancel',json={}).status_code==200
-                control=c.post('/api/v1/platforms/dy/probes',json={'capability':'search'}).json()
-                end=time.monotonic()+5
-                while time.monotonic()<end:
-                    result=c.get('/api/v1/operations/'+control['id']).json()
-                    if result['state']=='completed':break
-                    time.sleep(.02)
-                assert result['verdict']=='available'
+                complete_early_control(c,job['id'])
                 assert c.get('/api/v1/jobs/'+job['id']).json()['attempt']==1
             epoch[0]=datetime.fromisoformat(view['status_detail']['next_retry_at']).timestamp()+1
         view=wait_job(c,job['id'],lambda j:j['status_detail']['retry']['blocked_reason']=='manual_action',timeout=5)
         time.sleep(.4)
         assert c.get('/api/v1/jobs/'+job['id']).json()['attempt']==2
         assert view['status_detail']['next_retry_at'] is None
+
+
+def test_early_control_cannot_resume_a_different_account(tmp_path,monkeypatch):
+    app,c=client_for(tmp_path)
+    epoch=[time.time()]
+    monkeypatch.setattr('workbench.retrying.time.time',lambda:epoch[0])
+    app.state.availability.clock=lambda:epoch[0]
+    probe="import pathlib,sys;pathlib.Path(sys.argv[1]).write_text('{\"verdict\":\"available\",\"reason\":\"control_success\",\"attempted\":true,\"requests\":1}')"
+    command=lambda identity,result:[sys.executable,'-c',probe,str(result)]
+    script="import os,sys;os.environ['MEDIAWORKBENCH_JOB_ID']=sys.argv[1];from tools.crawl_status import record;record('search','empty_response',scope='fixture')"
+    with workers(app,script,probe=command):
+        job=c.post('/api/v1/jobs',json={'platform':'dy','keywords':'fixture'}).json()
+        view=wait_job(c,job['id'],lambda j:j['state']=='waiting_retry')
+        complete_early_control(c,job['id'])
+        app.state.db.execute("UPDATE platform_sessions SET account_id='another-account'")
+        epoch[0]=datetime.fromisoformat(view['status_detail']['next_retry_at']).timestamp()+1
+        time.sleep(.6)
+        view=c.get('/api/v1/jobs/'+job['id']).json()
+        assert view['attempt']==1 and view['state']=='waiting_retry'
+        assert view['status_detail']['retry']['blocked_reason']=='account_changed'
+
+
+@pytest.mark.parametrize('verdict',['network_error','interface_error','unconfirmed'])
+def test_inconclusive_control_saves_next_retry_instead_of_stranding(tmp_path,monkeypatch,verdict):
+    app,c=client_for(tmp_path)
+    epoch=[time.time()]
+    monkeypatch.setattr('workbench.retrying.time.time',lambda:epoch[0])
+    app.state.availability.clock=lambda:epoch[0]
+    response=tmp_path/'probe-response.json'
+    response.write_text(json.dumps({'verdict':verdict,'reason':'timeout','attempted':True,'requests':1}))
+    probe=f"import pathlib,sys;pathlib.Path(sys.argv[1]).write_bytes(pathlib.Path({str(response)!r}).read_bytes())"
+    command=lambda identity,result:[sys.executable,'-c',probe,str(result)]
+    script="import os,sys;os.environ['MEDIAWORKBENCH_JOB_ID']=sys.argv[1];from tools.crawl_status import record;record('search','empty_response',scope='fixture')"
+    with workers(app,script,probe=command):
+        job=c.post('/api/v1/jobs',json={'platform':'dy','keywords':'fixture'}).json()
+        view=wait_job(c,job['id'],lambda j:j['state']=='waiting_retry')
+        epoch[0]=datetime.fromisoformat(view['status_detail']['next_retry_at']).timestamp()+1
+        view=wait_job(c,job['id'],lambda j:j['status_detail']['retry']['reason']=='access_check_inconclusive',timeout=5)
+        next_time=datetime.fromisoformat(view['status_detail']['next_retry_at']).timestamp()
+        assert 5400<=next_time-epoch[0]<=7200
+        assert view['attempt']==1
+        response.write_text('{"verdict":"available","reason":"control_success","attempted":true,"requests":1}')
+        epoch[0]=next_time+1
+        wait_job(c,job['id'],lambda j:j['attempt']==2)
 
 
 def client_for(root):

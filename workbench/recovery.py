@@ -602,6 +602,8 @@ class Recovery:
                 reason='manual_action';explanation='平台访问需要人工复核，已有数据和重试规则保留；查看平台状态后明确恢复。'
             elif retry.get('blocked_reason')=='access_recheck':
                 explanation+=' 平台访问尚未恢复，到期仍需通过原生复查。'
+            elif retry.get('blocked_reason')=='access_check_pending':
+                explanation+=' 访问复查尚未确认，将按保存时间再次检查。'
         return {
             "lifecycle": lifecycle,
             "wait_reason": reason if lifecycle == "waiting" else "",

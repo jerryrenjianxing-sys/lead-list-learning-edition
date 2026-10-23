@@ -402,7 +402,7 @@ class Availability:
                     "DELETE FROM access_replays WHERE capability=? AND job_id IN (SELECT w.job_id FROM access_waits w JOIN jobs j ON j.id=w.job_id WHERE j.platform=? AND w.account_id=? AND w.enabled=1)",
                     (capability, platform, account),
                 )
-            self._resume(con, platform, account, operation["id"])
+            self.resume_waiting(con, platform, account, operation["id"])
 
     def pause(self, con, job, capability, reason, retry_after=0):
         session = self._session(con, job["platform"])
@@ -457,29 +457,26 @@ class Availability:
                         automatic=True,
                         original_reason="request_rejected",
                     )
-            # A control may succeed before a task's timer. Release that saved
-            # wait through the same replay guard once the timer becomes due.
-            ready = con.execute(
-                "SELECT DISTINCT j.platform,w.account_id,s.operation_id FROM jobs j JOIN job_retry_plans p ON p.job_id=j.id JOIN access_waits w ON w.job_id=j.id JOIN access_state s ON s.platform=j.platform AND s.account_id=w.account_id AND s.capability=w.capability WHERE j.state='waiting_retry' AND p.enabled=1 AND p.next_retry_at<=? AND w.enabled=1 AND s.state='available' AND NOT EXISTS(SELECT 1 FROM operations o JOIN access_checks c ON c.operation_id=o.id WHERE o.platform=j.platform AND c.account_id=w.account_id AND o.state IN ('accepted','running','cancelling'))",
-                (self.clock(),),
-            ).fetchall()
-            for state in ready:
-                self._resume(con,state['platform'],state['account_id'],state['operation_id'])
             con.commit()
 
-    def _resume(self, con, platform, account, operation_id):
+    def resume_waiting(self, con, platform, account, operation_id):
+        session = self._session(con, platform)
         if (
             not account
-            or self._session(con, platform)["check_state"] != "authenticated"
+            or session['account_id'] != account
+            or session["check_state"] != "authenticated"
         ):
             return
         jobs = con.execute(
-            "SELECT DISTINCT j.id FROM jobs j JOIN access_waits w ON j.id=w.job_id WHERE j.platform=? AND j.state IN ('waiting_access','waiting_retry') AND w.enabled=1 AND w.account_id=?",
+            "SELECT DISTINCT j.* FROM jobs j JOIN access_waits w ON j.id=w.job_id WHERE j.platform=? AND j.state IN ('waiting_access','waiting_retry') AND w.enabled=1 AND w.account_id=?",
             (platform, account),
         ).fetchall()
         for job in jobs:
-            plan=con.execute('SELECT next_retry_at FROM job_retry_plans WHERE job_id=? AND enabled=1',(job['id'],)).fetchone()
+            plan=con.execute('SELECT * FROM job_retry_plans WHERE job_id=? AND enabled=1',(job['id'],)).fetchone()
             if plan and plan['next_retry_at'] and plan['next_retry_at']>self.clock():continue
+            if plan and job['state']=='waiting_retry':
+                from .retrying import retry_gate
+                if retry_gate(con,job,plan)['blocked_reason']:continue
             generation = self._session(con, platform)["generation"]
             already_replayed = con.execute(
                 "SELECT 1 FROM access_replays r JOIN access_waits w ON w.job_id=r.job_id AND w.capability=r.capability WHERE w.job_id=? AND w.enabled=1 AND r.generation=?",

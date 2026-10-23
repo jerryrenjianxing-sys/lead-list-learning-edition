@@ -6,12 +6,14 @@ import random
 import time
 from datetime import datetime, timezone
 from sqlite3 import Connection
-from typing import Literal, Mapping, TypedDict
+from typing import TYPE_CHECKING, Literal, Mapping, TypedDict
 
 from .database import Conflict, Database, Missing, now
+if TYPE_CHECKING:
+    from .availability import Availability
 
 
-BlockedReason = Literal['', 'account_changed', 'authentication_required', 'manual_action', 'access_recheck']
+BlockedReason = Literal['', 'account_changed', 'authentication_required', 'manual_action', 'access_recheck', 'access_check_pending']
 
 
 class RetryPolicy(TypedDict, total=False):
@@ -86,6 +88,8 @@ def retry_gate(con: Connection, job: Mapping, plan: Mapping) -> RetryGate:
             reason = 'access_recheck'
             if deadline is not None:
                 deadline = max([deadline] + [b['cooldown_until'] for b in blocks if b['cooldown_until'] is not None])
+        elif con.execute("SELECT 1 FROM access_waits w LEFT JOIN access_state s ON s.platform=? AND s.account_id=w.account_id AND s.capability=w.capability WHERE w.job_id=? AND w.enabled=1 AND COALESCE(s.state,'unknown')<>'available'", (job['platform'],job['id'])).fetchone():
+            reason = 'access_check_pending'
     return {'blocked_reason': reason, 'next_retry_at': None if reason in ('account_changed', 'authentication_required', 'manual_action') else deadline}
 
 
@@ -151,17 +155,30 @@ def finish_state(con: Connection, job: Mapping, state: str) -> str:
     return 'waiting_retry'
 
 
-def release_due(con: Connection) -> None:
+def release_due(con: Connection, availability: Availability) -> None:
     """Claim a saved timer without clearing authentication or capability blocks."""
     from .recovery import event
     epoch=time.time()
     rows=con.execute("SELECT j.* FROM jobs j JOIN job_retry_plans p ON p.job_id=j.id WHERE j.state='waiting_retry' AND p.enabled=1 AND p.next_retry_at<=? ORDER BY p.next_retry_at,j.created,j.id",(epoch,)).fetchall()
     for job in rows:
         plan=con.execute('SELECT * FROM job_retry_plans WHERE job_id=?',(job['id'],)).fetchone()
-        if retry_gate(con,job,plan)['blocked_reason']:continue
+        if retry_gate(con,job,plan)['blocked_reason'] not in ('','access_check_pending'):continue
         # Access recovery owns the once-only replay receipt, including when a
         # successful control preceded this timer. Never queue around that seam.
-        if con.execute('SELECT 1 FROM access_waits WHERE job_id=? AND enabled=1',(job['id'],)).fetchone():continue
+        waits=con.execute("SELECT w.capability,s.state,s.operation_id FROM access_waits w LEFT JOIN access_state s ON s.platform=? AND s.account_id=w.account_id AND s.capability=w.capability WHERE w.job_id=? AND w.enabled=1",(job['platform'],job['id'])).fetchall()
+        if waits:
+            if all(wait['state']=='available' for wait in waits):
+                availability.resume_waiting(con,job['platform'],account(con,job['platform']),waits[-1]['operation_id'])
+            else:
+                # Inconclusive controls must get a new saved wait, rather than
+                # leaving an expired timer with no future operation to release it.
+                delay=choose(plan);deadline=epoch+delay
+                con.execute("UPDATE job_retry_plans SET next_retry_at=?,delay_seconds=?,reason='access_check_inconclusive',updated=? WHERE job_id=?",(deadline,delay,now(),job['id']))
+                for wait in waits:
+                    if wait['state']!='available':
+                        availability.request(con,job['platform'],wait['capability'],source_job=job['id'],source_attempt=job['attempt'],original_reason='request_rejected')
+                event(con,job['id'],job['attempt'],'Access check inconclusive; next check saved',source='queue',kind='retry_scheduled',details={'reason':'access_check_inconclusive','next_retry_at':iso(deadline),'delay_seconds':delay})
+            continue
         changed=con.execute("UPDATE jobs SET state='queued',error=NULL,updated=? WHERE id=? AND state='waiting_retry'",(now(),job['id'])).rowcount
         if changed:
             con.execute('UPDATE job_retry_plans SET next_retry_at=NULL,updated=? WHERE job_id=?',(now(),job['id']))

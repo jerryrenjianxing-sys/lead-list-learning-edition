@@ -266,7 +266,7 @@ class Queue:
             if not self.db.accept_writes:
                 return None
             from .retrying import release_due
-            release_due(con)
+            release_due(con,self.availability)
             if con.execute("SELECT 1 FROM operations WHERE kind='probe' AND state IN ('running','cancelling') LIMIT 1").fetchone():
                 return None
             row = con.execute(
