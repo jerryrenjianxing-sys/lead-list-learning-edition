@@ -16,7 +16,7 @@ from tools import crawl_status
 from . import recovery
 
 TERMINAL = {"completed", "partial", "failed", "cancelled", "interrupted", "needs_login", "waiting_access", "waiting_retry"}
-CLAIM_ORDER = "(json_extract(options,'$.crawler_type')='login') DESC,COALESCE((SELECT MAX(a.started) FROM job_attempts a WHERE a.job_id=jobs.id),created),created,id"
+CLAIM_ORDER = "(json_extract(options,'$.crawler_type')='login') DESC,(NOT EXISTS(SELECT 1 FROM job_attempts a WHERE a.job_id=jobs.id)) DESC,COALESCE((SELECT MAX(a.started) FROM job_attempts a WHERE a.job_id=jobs.id),created),created,id"
 PLATFORMS = {
     "xhs": "小红书",
     "dy": "抖音",

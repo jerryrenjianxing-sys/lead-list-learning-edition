@@ -36,7 +36,7 @@ async function main() {
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
     const errors = [];
-    let failDiagnostics = false, failJobs = false, datasetsOnly = false, jobMode = 'normal';
+    let failDiagnostics = false, failJobs = false, datasetsOnly = false, jobMode = 'normal', retryAuth = false;
     let savedBrowserPath = 'C:/fixture-only/Chrome.exe', releaseSettingsSave;
     const unrelatedReads = [];
     page.on('pageerror', error => errors.push(error.message));
@@ -76,6 +76,10 @@ async function main() {
           timings: { local: { browser_start: { state: 'interrupted', elapsed_seconds: 93.8 } } },
         },
       };
+      if (routePath === '/jobs' && jobMode === 'retry' && retryAuth) {
+        fixtures['/jobs'].items[0].status_detail.next_retry_at = null;
+        fixtures['/jobs'].items[0].status_detail.retry.blocked_reason = 'authentication_required';
+      }
       if (routePath === '/artifacts') return route.fulfill({ status: 503, json: { detail: '夹具成果暂不可读' } });
       if (Object.hasOwn(fixtures, routePath)) return route.fulfill({ json: fixtures[routePath] });
       return route.fulfill({ status: 404, json: { detail: 'Unknown fixture route' } });
@@ -142,6 +146,12 @@ async function main() {
     await fs.mkdir(retryShots, { recursive: true });
     await page.screenshot({ path: path.join(retryShots, 'waiting-retry.png'), fullPage: true });
     checks.push('Persisted retry state shows its next time and the inclusive 100-record threshold');
+    retryAuth = true;
+    await page.getByText('下次重试：等待登录或验证', { exact: false }).waitFor();
+    assert.equal(await page.getByRole('button', { name: '去平台登录', exact: true }).count(), 1);
+    assert.equal(await page.getByRole('button', { name: '停止自动续接', exact: true }).count(), 1);
+    checks.push('A retry blocked on authentication explains the wait and offers login while retaining stop');
+    retryAuth = false;
     jobMode = 'unconfirmed';
     await until(() => page.getByText('平台返回空列表，尚未确认结果。', { exact: true }).count(), 'An unconfirmed stop must show its reason beside the task');
     assert.equal(await page.getByText('无搜索结果', { exact: true }).count(), 0);

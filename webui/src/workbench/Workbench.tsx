@@ -625,9 +625,10 @@ export default function Workbench() {
                     )}
                     {j.status_detail && j.options.crawler_type !== "login" && <small>本轮新增 {j.status_detail.counts.inserted} · 更新 {j.status_detail.counts.updated} · 重复 {j.status_detail.counts.unchanged} · 累计 {j.status_detail.counts.dataset_total}{!j.status_detail.range_verified ? " · 范围尚未全部确认" : ""}</small>}
                     {j.status_detail?.explanation && <small>{j.status_detail.explanation}</small>}
-                    {j.state === "waiting_retry" && <small className="wb-retry-time">下次重试：{j.status_detail?.next_retry_at ? date(j.status_detail.next_retry_at) : j.status_detail?.retry?.blocked_reason === "account_changed" ? "等待确认账号" : j.status_detail?.retry?.blocked_reason === "manual_action" ? "等待人工复核" : "确认停止后安排"} · 累计不超过 {j.status_detail?.retry?.threshold ?? 100} 条视为未跑通</small>}
+                    {j.state === "waiting_retry" && <small className="wb-retry-time">下次重试：{j.status_detail?.next_retry_at ? date(j.status_detail.next_retry_at) : j.status_detail?.retry?.blocked_reason === "account_changed" ? "等待确认账号" : j.status_detail?.retry?.blocked_reason === "authentication_required" ? "等待登录或验证" : j.status_detail?.retry?.blocked_reason === "manual_action" ? "等待人工复核" : "确认停止后安排"} · 累计不超过 {j.status_detail?.retry?.threshold ?? 100} 条视为未跑通</small>}
                   </button>
                   <Status value={jobStatus(j)} />
+                  {j.state === "waiting_retry" && j.status_detail?.retry?.blocked_reason === "authentication_required" && <button onClick={() => goLogin(j.platform)}>去平台登录</button>}
                   {j.state === "needs_login" && <button onClick={() => goLogin(j.platform)}>去平台登录</button>}
                   {j.state === "waiting_access" && j.status_detail?.next_actions.some(a => a.id === "resume" && a.enabled) && <button disabled={busy} onClick={() => void perform(() => api(`/jobs/${j.id}/resume`,"POST",{}))}>重试原任务</button>}
                   {j.state === "waiting_retry" && j.status_detail?.next_actions.some(a => a.id === "resume" && a.enabled) && <button disabled={busy} onClick={() => void perform(() => api(`/jobs/${j.id}/resume`,"POST",{}))}>立即重试</button>}

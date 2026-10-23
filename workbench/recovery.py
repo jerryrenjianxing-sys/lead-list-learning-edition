@@ -6,6 +6,7 @@ import json
 import re
 from typing import TypedDict
 from .database import dump, now, uid
+from .retrying import RetryView
 
 
 class AttemptCounts(TypedDict):
@@ -32,7 +33,7 @@ class StatusDetail(TypedDict):
     access: list[dict]
     operation_refs: list[str]
     next_retry_at: str | None
-    retry: dict | None
+    retry: RetryView | None
 
 
 class OperationResult(TypedDict, total=False):
@@ -590,11 +591,13 @@ class Recovery:
         retry=retry_view(self.db,job)
         if state=='waiting_retry':
             reason=retry['reason'] or 'scheduled_retry'
-            explanation=(f"累计去重 {total} 条，不超过 {retry['threshold']} 条，尚未跑通；等待定时重试。" if reason=='insufficient_records'
+            explanation=(f"内容、评论及回复累计去重 {retry['record_count']} 条，不超过 {retry['threshold']} 条，尚未跑通；等待定时重试。" if reason=='insufficient_records'
                          else '采集尚未完成，已安排定时重试；沿用原任务和已保存数据。')
             range_result='retry_pending'
             if retry.get('blocked_reason')=='account_changed':
                 reason='account_changed';explanation='账号环境已改变，自动重试等待确认；原任务及已保存数据保留。'
+            elif retry.get('blocked_reason')=='authentication_required':
+                reason='authentication_required';explanation='当前认证尚未确认有效，定时重试等待登录或验证；原任务及已保存数据保留。'
             elif retry.get('blocked_reason')=='manual_action':
                 reason='manual_action';explanation='平台访问需要人工复核，已有数据和重试规则保留；查看平台状态后明确恢复。'
             elif retry.get('blocked_reason')=='access_recheck':

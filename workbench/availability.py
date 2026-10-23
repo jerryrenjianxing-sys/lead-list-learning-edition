@@ -479,7 +479,7 @@ class Availability:
             ).fetchone()
             if already_replayed:
                 con.execute(
-                    "UPDATE jobs SET error=?,updated=? WHERE id=? AND state='waiting_access'",
+                    "UPDATE jobs SET error=?,updated=? WHERE id=? AND state IN ('waiting_access','waiting_retry')",
                     (
                         "对照读取成功，但原目标重试后仍异常。已停止自动重试，请检查目标、范围或接口后手动恢复。",
                         now(),
