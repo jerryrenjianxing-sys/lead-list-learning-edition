@@ -198,6 +198,16 @@ class Availability:
             ):
                 return None
             epoch = self.clock()
+            # Retire stale checks before retry/cooldown filtering. A changed
+            # account must not leave an ineligible operation accepted forever.
+            con.execute(
+                """UPDATE operations SET state='failed',updated=?,result=?
+                   WHERE kind='probe' AND state='accepted' AND EXISTS(
+                       SELECT 1 FROM access_checks c LEFT JOIN platform_sessions s ON s.platform=operations.platform
+                       WHERE c.operation_id=operations.id
+                         AND (c.account_id IS NOT s.account_id OR c.generation<>COALESCE(s.generation,0)))""",
+                (now(),dump({'attempted':False,'reason_code':'session_changed','next_actions':['retry']})),
+            )
             candidates = con.execute(
                 """SELECT o.*,c.environment,c.generation,c.account_id,c.control,c.original_reason,
                           c.automatic,c.source_job,c.source_attempt
@@ -212,26 +222,6 @@ class Availability:
             ).fetchall()
             row = next((candidate for candidate in candidates if self._retry_check_ready(con,candidate,epoch)),None)
             if not row:
-                return None
-            session = self._session(con, row["platform"])
-            if (
-                session["account_id"] != row["account_id"]
-                or session["generation"] != row["generation"]
-            ):
-                con.execute(
-                    "UPDATE operations SET state='failed',updated=?,result=? WHERE id=?",
-                    (
-                        now(),
-                        dump(
-                            {
-                                "attempted": False,
-                                "reason_code": "session_changed",
-                                "next_actions": ["retry"],
-                            }
-                        ),
-                        row["id"],
-                    ),
-                )
                 con.commit()
                 return None
             con.execute(

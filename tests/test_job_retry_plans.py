@@ -259,6 +259,31 @@ def test_blocked_waiter_cannot_trigger_a_shared_control(tmp_path,monkeypatch,blo
         assert c.get('/api/v1/jobs/'+first['id']).json()['attempt']==1
 
 
+@pytest.mark.parametrize('changed',['account','generation'])
+def test_stale_retry_check_finishes_before_eligibility_filter(tmp_path,monkeypatch,changed):
+    app,c=client_for(tmp_path)
+    epoch=[time.time()]
+    monkeypatch.setattr('workbench.retrying.time.time',lambda:epoch[0])
+    app.state.availability.clock=lambda:epoch[0]
+    script="import os,sys;os.environ['MEDIAWORKBENCH_JOB_ID']=sys.argv[1];from tools.crawl_status import record;record('search','empty_response',scope='fixture')"
+    with workers(app,script):
+        job=c.post('/api/v1/jobs',json={'platform':'dy','keywords':'fixture'}).json()
+        view=wait_job(c,job['id'],lambda j:j['state']=='waiting_retry')
+        operation=view['status_detail']['operation_refs'][0]
+        if changed=='account':
+            app.state.db.execute("UPDATE platform_sessions SET account_id='another-account'")
+        else:
+            app.state.db.execute('UPDATE platform_sessions SET generation=generation+1')
+        epoch[0]=datetime.fromisoformat(view['status_detail']['next_retry_at']).timestamp()+1
+        deadline=time.monotonic()+3
+        while time.monotonic()<deadline:
+            result=c.get('/api/v1/operations/'+operation).json()
+            if result['state']=='failed':break
+            time.sleep(.02)
+        assert result['state']=='failed' and result['reason_code']=='session_changed'
+        assert c.get('/api/v1/jobs/'+job['id']).json()['attempt']==1
+
+
 def client_for(root):
     app=make_app(root,run_queue=False)
     authenticated(app)
