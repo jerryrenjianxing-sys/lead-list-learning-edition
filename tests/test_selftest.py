@@ -61,7 +61,7 @@ def test_auth_and_no_public_worker_override(host):
     assert client.post("/api/v1/diagnostics/self-tests", json={}).status_code == 401
     client.get("/api/v1/session")
     assert client.post("/api/v1/diagnostics/self-tests", json={"worker_command": "bad"}).status_code == 422
-    assert client.post("/api/v1/jobs", json={"platform": "wb", "keywords": "test", "worker_command": "bad"}).status_code == 422
+    assert client.post("/api/v1/jobs", json={'retry_threshold': None, "platform": "wb", "keywords": "test", "worker_command": "bad"}).status_code == 422
 
 
 def test_restart_marks_interruption_and_removes_only_owned_workspace(tmp_path):

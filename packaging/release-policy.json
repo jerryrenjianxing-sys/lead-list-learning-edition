@@ -1,5 +1,5 @@
 {
   "publication": "preview",
-  "version": "0.5.1",
-  "reason": "Deliver the approved state/recovery preview with acceptance fixes for Electron restart and Chromium cookie-store ownership. Keep the failed unpublished v0.5.0 tag immutable, retain rollback v0.4.3, freeze dependencies, require dual 0.4.3/0.4.4 migration and private next-patch update, and update the local installation only after backup and when idle."
+  "version": "0.5.3",
+  "reason": "The user requested the 0.5.3 GitHub release and local installation on 2026-10-23 after the native retry review. Publish only after clean-source Windows checks, packaged diagnostics, desktop lifecycle, dual 0.4.3/0.4.4 migration and private next-patch update acceptance. Retain all old tags and rollback v0.4.3, freeze dependencies, and update the local installation only after backup and when idle."
 }

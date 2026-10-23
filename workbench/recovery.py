@@ -6,6 +6,7 @@ import json
 import re
 from typing import TypedDict
 from .database import dump, now, uid
+from .retrying import RetryView
 
 
 class AttemptCounts(TypedDict):
@@ -31,6 +32,8 @@ class StatusDetail(TypedDict):
     failure_domain: str
     access: list[dict]
     operation_refs: list[str]
+    next_retry_at: str | None
+    retry: RetryView | None
 
 
 class OperationResult(TypedDict, total=False):
@@ -103,12 +106,16 @@ def finish(con, job, state, checkpoint, reason=None):
     ):
         return False
     if current["state"] in ("stopping", "cancelled"):
-        state = "cancelled"
+        planned=con.execute('SELECT enabled FROM job_retry_plans WHERE job_id=?',(job['id'],)).fetchone()
+        state = 'retry_requested' if current['state']=='stopping' and planned and planned['enabled'] else 'cancelled'
     else:
         from .ownership import valid_session
 
         if not valid_session(con, job["id"], job["attempt"]):
             state, reason = "needs_login", "account_changed"
+    attempt_state='interrupted' if state=='retry_requested' else state
+    from .retrying import finish_state
+    state=finish_state(con,job,state)
     con.execute(
         "UPDATE collection_scopes SET outcome=?,reason=?,updated=? WHERE job_id=? AND attempt=? AND outcome='running'",
         (
@@ -125,7 +132,7 @@ def finish(con, job, state, checkpoint, reason=None):
     )
     con.execute(
         "UPDATE job_attempts SET state=?,finished=?,checkpoint=? WHERE job_id=? AND attempt=?",
-        (state, now(), dump(checkpoint), job["id"], job["attempt"]),
+        (attempt_state, now(), dump(checkpoint), job["id"], job["attempt"]),
     )
     event(
         con,
@@ -476,7 +483,7 @@ class Recovery:
             state
             if state in ("queued", "running", "stopping")
             else "waiting"
-            if state in ("needs_login", "waiting_access")
+            if state in ("needs_login", "waiting_access", "waiting_retry")
             else "ended"
         )
         total = self.db.query(
@@ -506,19 +513,19 @@ class Recovery:
         probing = any(
             item["state"] in ("accepted", "running", "cancelling") for item in probes
         )
-        if state in ("queued", "running", "needs_login", "waiting_access"):
+        if state in ("queued", "running", "needs_login", "waiting_access", "waiting_retry"):
             actions.append(
                 {
                     "id": "stop",
                     "label": "停止自动续接"
-                    if state in ("needs_login", "waiting_access")
+                    if state in ("needs_login", "waiting_access", "waiting_retry")
                     else "停止",
                     "enabled": True,
                 }
             )
         if (
             state in ("failed", "partial", "interrupted", "cancelled")
-            or state == "waiting_access"
+            or state in ("waiting_access", "waiting_retry")
             and not blocked
             and not probing
         ):
@@ -580,6 +587,23 @@ class Recovery:
             if scopes
             else "unconfirmed"
         )
+        from .retrying import view as retry_view
+        retry=retry_view(self.db,job)
+        if state=='waiting_retry':
+            reason=retry['reason'] or 'scheduled_retry'
+            explanation=(f"内容、评论及回复累计去重 {retry['record_count']} 条，不超过 {retry['threshold']} 条，尚未跑通；等待定时重试。" if reason=='insufficient_records'
+                         else '采集尚未完成，已安排定时重试；沿用原任务和已保存数据。')
+            range_result='retry_pending'
+            if retry.get('blocked_reason')=='account_changed':
+                reason='account_changed';explanation='账号环境已改变，自动重试等待确认；原任务及已保存数据保留。'
+            elif retry.get('blocked_reason')=='authentication_required':
+                reason='authentication_required';explanation='当前认证尚未确认有效，定时重试等待登录或验证；原任务及已保存数据保留。'
+            elif retry.get('blocked_reason')=='manual_action':
+                reason='manual_action';explanation='平台访问需要人工复核，已有数据和重试规则保留；查看平台状态后明确恢复。'
+            elif retry.get('blocked_reason')=='access_recheck':
+                explanation+=' 平台访问尚未恢复，到期仍需通过原生复查。'
+            elif retry.get('blocked_reason')=='access_check_pending':
+                explanation+=' 访问复查尚未确认，将按保存时间再次检查。'
         return {
             "lifecycle": lifecycle,
             "wait_reason": reason if lifecycle == "waiting" else "",
@@ -593,6 +617,8 @@ class Recovery:
             "failure_domain": failure_domain,
             "access": access,
             "operation_refs": [p["id"] for p in probes],
+            "next_retry_at": retry['next_retry_at'] if retry and retry['enabled'] else None,
+            "retry": retry,
             "scope_counts": {r["outcome"]: r["n"] for r in scopes},
             "range_verified": bool(scopes)
             and all(

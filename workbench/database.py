@@ -85,11 +85,11 @@ class Database:
         self.accept_writes = True
         with self.connect() as con:
             version = con.execute("PRAGMA user_version").fetchone()[0]
-            if version > 5:
+            if version > 6:
                 raise RuntimeError(
                     "Database belongs to a newer application. Open that version; existing data was not changed."
                 )
-            if version in (1, 2, 3, 4):
+            if version in (1, 2, 3, 4, 5):
                 self.backup()
             con.executescript(
                 "BEGIN IMMEDIATE;\n"
@@ -97,7 +97,7 @@ class Database:
                 + AUTH_SCHEMA
                 + SESSION_SCHEMA
                 + RECOVERY_SCHEMA
-                + "\nPRAGMA user_version=5;\nCOMMIT;"
+                + "\nPRAGMA user_version=6;\nCOMMIT;"
             )
 
     @contextmanager

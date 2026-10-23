@@ -20,6 +20,8 @@ def client(tmp_path):
 
 
 def post(c, path, body=None, key=None):
+    if path == '/jobs':
+        body = {'retry_threshold': None, **(body or {})}
     response = c.post(
         "/api/v1" + path,
         json=body or {},
@@ -189,7 +191,7 @@ def test_concurrent_retry_is_atomic(tmp_path):
             "same",
             {},
             lambda con: create_job(
-                con, CrawlRequest(platform="xhs", keywords="test").model_dump()
+                con, CrawlRequest(retry_threshold=None, platform="xhs", keywords="test").model_dump()
             ),
         )
 
@@ -258,7 +260,7 @@ def test_queue_failure_does_not_block_next_and_stops_persist(tmp_path):
             "job",
             {},
             lambda con: create_job(
-                con, CrawlRequest(platform=platform, keywords="test").model_dump()
+                con, CrawlRequest(retry_threshold=None, platform=platform, keywords="test").model_dump()
             ),
         )["id"]
 
@@ -325,7 +327,7 @@ def test_update_waits_for_idle_and_freezes_new_writes(client):
     )
     assert (
         client.post(
-            "/api/v1/jobs", json={"platform": "xhs", "keywords": "late"}
+            "/api/v1/jobs", json={'retry_threshold': None, "platform": "xhs", "keywords": "late"}
         ).status_code
         == 409
     )

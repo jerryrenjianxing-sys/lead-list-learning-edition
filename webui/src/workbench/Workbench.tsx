@@ -31,7 +31,7 @@ type Job = {
   attempt: number;
   dataset_id: string | null;
   error?: string | null;
-  status_detail?: { counts: { inserted: number; updated: number; unchanged: number; dataset_total: number }; range_verified: boolean; explanation: string; next_actions: { id: string; label: string; enabled: boolean }[] };
+  status_detail?: { counts: { inserted: number; updated: number; unchanged: number; dataset_total: number }; range_verified: boolean; explanation: string; next_retry_at?: string | null; retry?: { enabled: number; threshold: number; blocked_reason?: string } | null; next_actions: { id: string; label: string; enabled: boolean }[] };
 };
 const platforms = [
   ["xhs", "小红书"],
@@ -64,6 +64,7 @@ const labels: Record<string, string> = {
   unconfirmed: "范围未确认",
   needs_login: "需要登录",
   waiting_access: "等待访问恢复",
+  waiting_retry: "等待重试",
   waiting_agent: "等待 Agent 分析",
 };
 const name = (id: string) => platforms.find((p) => p[0] === id)?.[1] || id;
@@ -257,6 +258,7 @@ export default function Workbench() {
       await api("/jobs", "POST", {
         platform,
         crawler_type: mode,
+        retry_threshold: mode === "search" ? 100 : null,
         keywords: mode === "search" ? input : "",
         specified_ids: mode === "detail" ? input : "",
         creator_ids: mode === "creator" ? input : "",
@@ -623,11 +625,14 @@ export default function Workbench() {
                     )}
                     {j.status_detail && j.options.crawler_type !== "login" && <small>本轮新增 {j.status_detail.counts.inserted} · 更新 {j.status_detail.counts.updated} · 重复 {j.status_detail.counts.unchanged} · 累计 {j.status_detail.counts.dataset_total}{!j.status_detail.range_verified ? " · 范围尚未全部确认" : ""}</small>}
                     {j.status_detail?.explanation && <small>{j.status_detail.explanation}</small>}
+                    {j.state === "waiting_retry" && <small className="wb-retry-time">下次重试：{j.status_detail?.next_retry_at ? date(j.status_detail.next_retry_at) : j.status_detail?.retry?.blocked_reason === "account_changed" ? "等待确认账号" : j.status_detail?.retry?.blocked_reason === "authentication_required" ? "等待登录或验证" : j.status_detail?.retry?.blocked_reason === "manual_action" ? "等待人工复核" : "确认停止后安排"} · 累计不超过 {j.status_detail?.retry?.threshold ?? 100} 条视为未跑通</small>}
                   </button>
                   <Status value={jobStatus(j)} />
+                  {j.state === "waiting_retry" && j.status_detail?.retry?.blocked_reason === "authentication_required" && <button onClick={() => goLogin(j.platform)}>去平台登录</button>}
                   {j.state === "needs_login" && <button onClick={() => goLogin(j.platform)}>去平台登录</button>}
                   {j.state === "waiting_access" && j.status_detail?.next_actions.some(a => a.id === "resume" && a.enabled) && <button disabled={busy} onClick={() => void perform(() => api(`/jobs/${j.id}/resume`,"POST",{}))}>重试原任务</button>}
-                  {["queued", "running", "needs_login", "waiting_access"].includes(j.state) ? (
+                  {j.state === "waiting_retry" && j.status_detail?.next_actions.some(a => a.id === "resume" && a.enabled) && <button disabled={busy} onClick={() => void perform(() => api(`/jobs/${j.id}/resume`,"POST",{}))}>立即重试</button>}
+                  {["queued", "running", "needs_login", "waiting_access", "waiting_retry"].includes(j.state) ? (
                     <button
                       disabled={busy}
                       onClick={() =>
@@ -636,7 +641,7 @@ export default function Workbench() {
                         )
                       }
                     >
-                      {["needs_login", "waiting_access"].includes(j.state) ? "停止自动续接" : "停止"}
+                      {["needs_login", "waiting_access", "waiting_retry"].includes(j.state) ? "停止自动续接" : "停止"}
                     </button>
                   ) : (
                     !["completed", "stopping"].includes(j.state) && (
@@ -652,7 +657,7 @@ export default function Workbench() {
                       </button>
                     )
                   )}
-                  {!["queued", "running", "stopping", "needs_login", "waiting_access"].includes(j.state) && (
+                  {!["queued", "running", "stopping", "needs_login", "waiting_access", "waiting_retry"].includes(j.state) && (
                     <button
                       disabled={busy}
                       onClick={() => void perform(() => clearHistory([j.id]))}

@@ -10,7 +10,9 @@
 
 探测共享串行浏览器与总预算，不写正式数据；搜索通过只证明本次搜索能力。空响应、403、超时及对照失败均不能独自证明账号风控。正常无结果不追加探测。`waiting_access` 的明确限制或疑似限制按保存的冷却等待；网络和接口错误按各自原因处理。重新登录、重启不会清除冷却，三次自动复查仍未恢复时转人工操作。
 
-用户停止任务时调用原任务 `stop`，包括 `needs_login`、`waiting_access`；停止会禁用自动续接。自动恢复须账号一致、认证有效、相关访问阻塞解除。主动恢复沿用原任务及原数据集；更换账号需要用户明确继续。
+用户停止任务时调用原任务 `stop`，包括 `needs_login`、`waiting_access`、`waiting_retry`；停止会禁用自动续接。自动恢复须账号一致、认证有效、相关访问阻塞解除。主动恢复沿用原任务及原数据集；更换账号需要用户明确继续。
+
+0.5.2起搜索默认启用低量重试：去重内容、评论及回复合计不超过100条时进入`waiting_retry`，随机等待90–120分钟；账号资料不计入此门槛。`status_detail.retry.record_count`是判定记录量，`counts.dataset_total`仍是数据集所有类型合计，不能混用。下次时间见`next_retry_at`；认证、账号变化或人工复核阻塞时会给出原因和对应操作，而不承诺到期一定启动。显式传`retry_threshold:null`可保留单次搜索行为。定时等待使用`retry-plan`接口，不能用用户`stop`代替。历史终态不自动批量补建计划。
 
 按需分页读取 `/api/v1/jobs/ID/attempts`、`scopes?attempt=N&after=CURSOR`、`events?attempt=N&after=SEQ`。旧版仅有快照时说明历史不完整。`/api/v1/jobs/ID/diagnostics` 下载结构化脱敏诊断，包含范围引用、不含账号、关键词、原文或凭据。SQLite 成功提交表示记录已保存；原始文件失败可在停止任务后调用 `POST /api/v1/jobs/ID/raw-files/rebuild` 重建。
 

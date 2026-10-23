@@ -162,7 +162,9 @@ class Runner:
             with self.measure("playwright_start"):
                 self.pw = sync_playwright().start()
             with self.measure("browser_start"):
-                self.browser = self.pw.chromium.launch()
+                # Exercise the full bundled Chromium on Windows; the separate
+                # headless shell can outlive forced diagnostic teardown there.
+                self.browser = self.pw.chromium.launch(channel="chromium" if os.name == "nt" else None)
         return self.browser
 
     def close(self):
@@ -271,7 +273,7 @@ class Runner:
         from .models import CrawlRequest
         from .queue import Queue, create_job
         db = Database(self.directory / "queue")
-        result = db.write(None, "self-test", {}, lambda con: create_job(con, CrawlRequest(platform="wb", keywords="synthetic").model_dump()))
+        result = db.write(None, "self-test", {}, lambda con: create_job(con, CrawlRequest(platform="wb", keywords="synthetic", retry_threshold=None).model_dump()))
         assert db.one("jobs", result["id"])["state"] == "queued"
         queue = Queue(db, worker_command=lambda identity: [sys.executable, "-m", "workbench.selftest_runner", "--fixture", identity])
         queue.start()

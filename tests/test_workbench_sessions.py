@@ -19,7 +19,7 @@ from workbench.sessions import SessionManager
 
 
 def create(db, platform="dy", mode="search"):
-    options = CrawlRequest(
+    options = CrawlRequest(retry_threshold=None,
         platform=platform, crawler_type=mode, keywords="test"
     ).model_dump()
     return db.write(None, "new", options, lambda con: create_job(con, options))
@@ -35,7 +35,7 @@ def test_v3_migration_backs_up_and_keeps_auth(tmp_path):
     (backup,) = (tmp_path / "backups").glob("*.sqlite3")
     with sqlite3.connect(backup) as con:
         assert con.execute("PRAGMA user_version").fetchone()[0] == 3
-    assert db.query("PRAGMA user_version")[0]["user_version"] == 5
+    assert db.query("PRAGMA user_version")[0]["user_version"] == 6
     assert SessionStore(db).view("dy")["can_select"]
     Database(tmp_path)
     assert len(list((tmp_path / "backups").glob("*.sqlite3"))) == 1

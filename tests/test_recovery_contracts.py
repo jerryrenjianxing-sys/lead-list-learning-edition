@@ -65,7 +65,7 @@ def test_parsed_comment_paths_keep_structural_failure_facts(
     worker = f"import runpy,sys;sys.argv=[{str(driver)!r},{platform!r},sys.argv[1]];runpy.run_path({str(driver)!r},run_name='__main__')"
     with host(tmp_path, worker) as client:
         job = client.post(
-            "/api/v1/jobs", json={"platform": platform, "keywords": "fixture"}
+            "/api/v1/jobs", json={'retry_threshold': None, "platform": platform, "keywords": "fixture"}
         ).json()
         settled(client, job["id"])
         scopes = client.get("/api/v1/jobs/" + job["id"] + "/scopes").json()["items"]
@@ -77,7 +77,7 @@ def test_parsed_comment_paths_keep_structural_failure_facts(
 def test_stop_waiting_for_auth_is_visible_and_survives_restart(tmp_path):
     with host(tmp_path, LOGGED_OUT) as client:
         identity = client.post(
-            "/api/v1/jobs", json={"platform": "dy", "keywords": "fixture"}
+            "/api/v1/jobs", json={'retry_threshold': None, "platform": "dy", "keywords": "fixture"}
         ).json()["id"]
         assert settled(client, identity)["state"] == "needs_login"
         response = client.post("/api/v1/jobs/" + identity + "/stop", json={})
@@ -91,7 +91,7 @@ def test_stop_waiting_for_auth_is_visible_and_survives_restart(tmp_path):
 def test_cleanup_cannot_hide_a_task_that_will_automatically_resume(tmp_path):
     with host(tmp_path, LOGGED_OUT) as client:
         created = client.post(
-            "/api/v1/jobs", json={"platform": "dy", "keywords": "fixture"}
+            "/api/v1/jobs", json={'retry_threshold': None, "platform": "dy", "keywords": "fixture"}
         ).json()
         assert settled(client, created["id"])["state"] == "needs_login"
         explicit = client.post(
@@ -111,7 +111,7 @@ def test_cleanup_cannot_hide_a_task_that_will_automatically_resume(tmp_path):
 def test_retry_preserves_each_attempt_and_its_events(tmp_path):
     with host(tmp_path, "print('ERROR fixture unavailable')") as client:
         identity = client.post(
-            "/api/v1/jobs", json={"platform": "dy", "keywords": "fixture"}
+            "/api/v1/jobs", json={'retry_threshold': None, "platform": "dy", "keywords": "fixture"}
         ).json()["id"]
         assert settled(client, identity)["state"] == "failed"
         assert (
@@ -144,7 +144,7 @@ def test_retry_preserves_each_attempt_and_its_events(tmp_path):
 def test_paged_attempts_do_not_hide_legacy_history_limitations(tmp_path):
     with host(tmp_path, "print('ERROR fixture')") as client:
         job = client.post(
-            "/api/v1/jobs", json={"platform": "dy", "keywords": "fixture"}
+            "/api/v1/jobs", json={'retry_threshold': None, "platform": "dy", "keywords": "fixture"}
         ).json()
         settled(client, job["id"])
         client.app.state.db.execute(
@@ -194,7 +194,7 @@ asyncio.run(main())
     with host(tmp_path, worker) as client:
         job = client.post(
             "/api/v1/jobs",
-            json={"platform": "dy", "crawler_type": "detail", "specified_ids": "v1"},
+            json={'retry_threshold': None, "platform": "dy", "crawler_type": "detail", "specified_ids": "v1"},
         ).json()
         settled(client, job["id"])
         scope = next(
@@ -232,7 +232,7 @@ def test_probe_result_retries_storage_commit_without_repeating_network(tmp_path)
         assert result["state"] == "completed"
         assert marker.read_text() == "1"
         job = client.post(
-            "/api/v1/jobs", json={"platform": "xhs", "keywords": "fixture"}
+            "/api/v1/jobs", json={'retry_threshold': None, "platform": "xhs", "keywords": "fixture"}
         ).json()
         assert settled(client, job["id"])["state"] == "completed"
 
@@ -250,7 +250,7 @@ collect_record({{'aweme_id':'late','desc':'fixture'}},'contents','dy')
 """
     with host(tmp_path, worker) as client:
         created = client.post(
-            "/api/v1/jobs", json={"platform": "dy", "keywords": "fixture"}
+            "/api/v1/jobs", json={'retry_threshold': None, "platform": "dy", "keywords": "fixture"}
         ).json()
         deadline = time.monotonic() + 5
         while not ready.exists() and time.monotonic() < deadline:
@@ -279,7 +279,7 @@ collect_record({'aweme_id':'v1','desc':'second'},'contents','dy')
 """
     with host(tmp_path, worker) as client:
         identity = client.post(
-            "/api/v1/jobs", json={"platform": "dy", "keywords": "fixture"}
+            "/api/v1/jobs", json={'retry_threshold': None, "platform": "dy", "keywords": "fixture"}
         ).json()["id"]
         job = settled(client, identity)
         assert job["state"] == "completed"
@@ -334,7 +334,7 @@ record('search','no_results',scope='first',response={'status_code':0,'has_more':
 """
     with host(tmp_path, worker) as client:
         identity = client.post(
-            "/api/v1/jobs", json={"platform": "dy", "keywords": "first,second"}
+            "/api/v1/jobs", json={'retry_threshold': None, "platform": "dy", "keywords": "first,second"}
         ).json()["id"]
         settled(client, identity)
         response = client.get("/api/v1/jobs/" + identity + "/scopes?attempt=1")
@@ -363,7 +363,7 @@ asyncio.run(AsyncFileWriter('dy','search').write_to_jsonl({{'aweme_id':'durable'
 """
     with host(tmp_path, worker) as client:
         created = client.post(
-            "/api/v1/jobs", json={"platform": "dy", "keywords": "fixture"}
+            "/api/v1/jobs", json={'retry_threshold': None, "platform": "dy", "keywords": "fixture"}
         ).json()
         settled(client, created["id"])
         records = client.get(
@@ -431,7 +431,7 @@ record('search','restriction_explicit',scope='fixture',response={'http_status':4
             "INSERT INTO platform_sessions(platform,generation,account_id,check_state) VALUES('dy',1,'fixture-account','authenticated')"
         )
         created = client.post(
-            "/api/v1/jobs", json={"platform": "dy", "keywords": "fixture"}
+            "/api/v1/jobs", json={'retry_threshold': None, "platform": "dy", "keywords": "fixture"}
         ).json()
         assert settled(client, created["id"])["state"] == "waiting_access"
         availability = client.get("/api/v1/platforms/dy/availability").json()["items"][
@@ -476,7 +476,7 @@ record('search','restriction_explicit',scope='fixture',response={'http_status':4
             "INSERT INTO platform_sessions(platform,generation,account_id,check_state) VALUES('dy',1,'fixture-account','authenticated')"
         )
         created = client.post(
-            "/api/v1/jobs", json={"platform": "dy", "keywords": "fixture"}
+            "/api/v1/jobs", json={'retry_threshold': None, "platform": "dy", "keywords": "fixture"}
         ).json()
         assert settled(client, created["id"])["state"] == "waiting_access"
         for check, delay in ((1, 7200), (2, 14400), (3, None)):
@@ -508,7 +508,7 @@ def test_seven_platform_terminal_search_shapes_are_observed_without_losing_parse
     with host(tmp_path, worker) as client:
         created = client.post(
             "/api/v1/jobs",
-            json={
+            json={'retry_threshold': None,
                 "platform": platform,
                 "keywords": "fixture",
                 "enable_comments": False,
@@ -536,7 +536,7 @@ record('search','empty_response',scope='fixture')
             "INSERT INTO platform_sessions(platform,generation,account_id,check_state) VALUES('dy',1,'fixture-account','authenticated')"
         )
         created = client.post(
-            "/api/v1/jobs", json={"platform": "dy", "keywords": "fixture"}
+            "/api/v1/jobs", json={'retry_threshold': None, "platform": "dy", "keywords": "fixture"}
         ).json()
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
@@ -604,7 +604,7 @@ def test_cancelling_probe_recovers_after_host_restart(tmp_path):
 def test_raw_rebuild_obeys_update_freeze_and_idempotent_receipt(tmp_path):
     with host(tmp_path, "") as client:
         created = client.post(
-            "/api/v1/jobs", json={"platform": "dy", "keywords": "fixture"}
+            "/api/v1/jobs", json={'retry_threshold': None, "platform": "dy", "keywords": "fixture"}
         ).json()
         settled(client, created["id"])
         key = {"Idempotency-Key": "raw-rebuild-once"}
@@ -647,7 +647,7 @@ def test_probe_directory_failure_keeps_collection_queue_alive(tmp_path):
         assert operation["reason_code"] == "storage_error"
         assert operation["cleanup_complete"] is True
         created = client.post(
-            "/api/v1/jobs", json={"platform": "xhs", "keywords": "fixture"}
+            "/api/v1/jobs", json={'retry_threshold': None, "platform": "xhs", "keywords": "fixture"}
         ).json()
         assert settled(client, created["id"])["state"] == "completed"
 

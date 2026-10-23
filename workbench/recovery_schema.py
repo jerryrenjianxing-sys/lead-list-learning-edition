@@ -1,6 +1,11 @@
 """Additive schema for auditable collection attempts and recovery operations."""
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS job_retry_plans(
+ job_id TEXT PRIMARY KEY REFERENCES jobs(id), enabled INTEGER NOT NULL DEFAULT 1,
+ threshold INTEGER NOT NULL DEFAULT 100, min_seconds INTEGER NOT NULL DEFAULT 5400,
+ max_seconds INTEGER NOT NULL DEFAULT 7200, next_retry_at REAL, delay_seconds INTEGER,
+ reason TEXT NOT NULL DEFAULT '', account_id TEXT, updated TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS job_attempts(
  job_id TEXT NOT NULL REFERENCES jobs(id), attempt INTEGER NOT NULL,
  state TEXT NOT NULL, started TEXT, finished TEXT,

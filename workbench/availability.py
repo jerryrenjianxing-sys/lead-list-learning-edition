@@ -9,7 +9,8 @@ from __future__ import annotations
 import json
 import time
 import re
-from typing import Literal, TypedDict
+from sqlite3 import Connection
+from typing import Literal, Mapping, TypedDict
 
 from .database import digest, dump, now, uid
 
@@ -196,30 +197,31 @@ class Availability:
                 ).fetchone()
             ):
                 return None
-            row = con.execute(
-                "SELECT o.*,c.environment,c.generation,c.account_id,c.control,c.original_reason,c.automatic,c.source_job,c.source_attempt FROM operations o JOIN access_checks c ON c.operation_id=o.id WHERE o.state='accepted' ORDER BY o.created,o.id LIMIT 1"
-            ).fetchone()
+            epoch = self.clock()
+            # Retire stale checks before retry/cooldown filtering. A changed
+            # account must not leave an ineligible operation accepted forever.
+            con.execute(
+                """UPDATE operations SET state='failed',updated=?,result=?
+                   WHERE kind='probe' AND state='accepted' AND EXISTS(
+                       SELECT 1 FROM access_checks c LEFT JOIN platform_sessions s ON s.platform=operations.platform
+                       WHERE c.operation_id=operations.id
+                         AND (c.account_id IS NOT s.account_id OR c.generation<>COALESCE(s.generation,0)))""",
+                (now(),dump({'attempted':False,'reason_code':'session_changed','next_actions':['retry']})),
+            )
+            candidates = con.execute(
+                """SELECT o.*,c.environment,c.generation,c.account_id,c.control,c.original_reason,
+                          c.automatic,c.source_job,c.source_attempt
+                   FROM operations o JOIN access_checks c ON c.operation_id=o.id
+                   WHERE o.state='accepted'
+                     AND NOT EXISTS(SELECT 1 FROM access_state s WHERE s.platform=o.platform
+                                    AND s.account_id=COALESCE(c.account_id,'') AND s.capability=o.capability
+                                    AND ((s.state IN ('restricted','suspected_restriction') AND s.cooldown_until>?)
+                                         OR (s.state='manual_action' AND (c.automatic=1 OR c.source_job IS NOT NULL))))
+                   ORDER BY o.created,o.id""",
+                (epoch,),
+            ).fetchall()
+            row = next((candidate for candidate in candidates if self._retry_check_ready(con,candidate,epoch)),None)
             if not row:
-                return None
-            session = self._session(con, row["platform"])
-            if (
-                session["account_id"] != row["account_id"]
-                or session["generation"] != row["generation"]
-            ):
-                con.execute(
-                    "UPDATE operations SET state='failed',updated=?,result=? WHERE id=?",
-                    (
-                        now(),
-                        dump(
-                            {
-                                "attempted": False,
-                                "reason_code": "session_changed",
-                                "next_actions": ["retry"],
-                            }
-                        ),
-                        row["id"],
-                    ),
-                )
                 con.commit()
                 return None
             con.execute(
@@ -228,6 +230,37 @@ class Availability:
             )
             con.commit()
             return dict(row)
+
+    def _retry_check_ready(self, con: Connection, check: Mapping, epoch: float) -> bool:
+        from .retrying import retry_gate
+        source_plan = con.execute('SELECT 1 FROM job_retry_plans WHERE job_id=? AND enabled=1',(check['source_job'],)).fetchone()
+        if not source_plan:
+            return True
+        waiters = con.execute(
+            "SELECT j.* FROM jobs j JOIN access_waits w ON w.job_id=j.id "
+            "JOIN job_retry_plans p ON p.job_id=j.id "
+            "WHERE j.platform=? AND w.capability=? AND w.account_id=? AND w.enabled=1 "
+            "AND j.state='waiting_retry' AND p.enabled=1 AND p.next_retry_at<=?",
+            (check['platform'],check['capability'],check['account_id'] or '',epoch),
+        ).fetchall()
+        for job in waiters:
+            plan = con.execute('SELECT * FROM job_retry_plans WHERE job_id=?',(job['id'],)).fetchone()
+            gate = retry_gate(con,job,plan)
+            if gate['blocked_reason'] in ('','access_check_pending','access_recheck') and gate['next_retry_at'] is not None and gate['next_retry_at']<=epoch:
+                return True
+        return False
+
+    def has_pending_check(self, con: Connection, platform: str, capabilities: list[str]) -> bool:
+        if not capabilities:
+            return False
+        session = self._session(con, platform)
+        placeholders = ','.join('?' for _ in capabilities)
+        return con.execute(
+            "SELECT 1 FROM operations o JOIN access_checks c ON c.operation_id=o.id "
+            "WHERE o.platform=? AND c.account_id IS ? AND c.generation=? "
+            "AND o.state IN ('accepted','running','cancelling') AND o.capability IN ("+placeholders+")",
+            (platform,session['account_id'],session['generation'],*capabilities),
+        ).fetchone() is not None
 
     def cancel(self, con, identity):
         con.execute(
@@ -401,7 +434,7 @@ class Availability:
                     "DELETE FROM access_replays WHERE capability=? AND job_id IN (SELECT w.job_id FROM access_waits w JOIN jobs j ON j.id=w.job_id WHERE j.platform=? AND w.account_id=? AND w.enabled=1)",
                     (capability, platform, account),
                 )
-            self._resume(con, platform, account, operation["id"])
+            self.resume_waiting(con, platform, account, operation["id"])
 
     def pause(self, con, job, capability, reason, retry_after=0):
         session = self._session(con, job["platform"])
@@ -445,8 +478,8 @@ class Availability:
                 ] != "authenticated":
                     continue
                 waiting = con.execute(
-                    "SELECT 1 FROM access_waits w JOIN jobs j ON j.id=w.job_id WHERE w.account_id=? AND w.capability=? AND w.enabled=1 AND j.state='waiting_access'",
-                    (state["account_id"], state["capability"]),
+                    "SELECT 1 FROM access_waits w JOIN jobs j ON j.id=w.job_id WHERE w.account_id=? AND w.capability=? AND w.enabled=1 AND j.state IN ('waiting_access','waiting_retry') AND NOT EXISTS(SELECT 1 FROM job_retry_plans p WHERE p.job_id=j.id AND p.enabled=1 AND p.next_retry_at>?)",
+                    (state["account_id"], state["capability"],self.clock()),
                 ).fetchone()
                 if waiting:
                     self.request(
@@ -458,17 +491,24 @@ class Availability:
                     )
             con.commit()
 
-    def _resume(self, con, platform, account, operation_id):
+    def resume_waiting(self, con, platform, account, operation_id):
+        session = self._session(con, platform)
         if (
             not account
-            or self._session(con, platform)["check_state"] != "authenticated"
+            or session['account_id'] != account
+            or session["check_state"] != "authenticated"
         ):
             return
         jobs = con.execute(
-            "SELECT DISTINCT j.id FROM jobs j JOIN access_waits w ON j.id=w.job_id WHERE j.platform=? AND j.state='waiting_access' AND w.enabled=1 AND w.account_id=?",
+            "SELECT DISTINCT j.* FROM jobs j JOIN access_waits w ON j.id=w.job_id WHERE j.platform=? AND j.state IN ('waiting_access','waiting_retry') AND w.enabled=1 AND w.account_id=?",
             (platform, account),
         ).fetchall()
         for job in jobs:
+            plan=con.execute('SELECT * FROM job_retry_plans WHERE job_id=? AND enabled=1',(job['id'],)).fetchone()
+            if plan and plan['next_retry_at'] and plan['next_retry_at']>self.clock():continue
+            if plan and job['state']=='waiting_retry':
+                from .retrying import retry_gate
+                if retry_gate(con,job,plan)['blocked_reason']:continue
             generation = self._session(con, platform)["generation"]
             already_replayed = con.execute(
                 "SELECT 1 FROM access_replays r JOIN access_waits w ON w.job_id=r.job_id AND w.capability=r.capability WHERE w.job_id=? AND w.enabled=1 AND r.generation=?",
@@ -476,7 +516,7 @@ class Availability:
             ).fetchone()
             if already_replayed:
                 con.execute(
-                    "UPDATE jobs SET error=?,updated=? WHERE id=? AND state='waiting_access'",
+                    "UPDATE jobs SET error=?,updated=? WHERE id=? AND state IN ('waiting_access','waiting_retry')",
                     (
                         "对照读取成功，但原目标重试后仍异常。已停止自动重试，请检查目标、范围或接口后手动恢复。",
                         now(),
@@ -494,12 +534,13 @@ class Availability:
                     (generation, operation_id, now(), job["id"]),
                 )
                 con.execute(
-                    "UPDATE jobs SET state='queued',updated=?,error=NULL WHERE id=? AND state='waiting_access'",
+                    "UPDATE jobs SET state='queued',updated=?,error=NULL WHERE id=? AND state IN ('waiting_access','waiting_retry')",
                     (now(), job["id"]),
                 )
                 con.execute(
                     "UPDATE access_waits SET enabled=0 WHERE job_id=?", (job["id"],)
                 )
+                con.execute('UPDATE job_retry_plans SET next_retry_at=NULL,updated=? WHERE job_id=?',(now(),job['id']))
 
     def view(self, platform):
         with self.db.connect() as con:
