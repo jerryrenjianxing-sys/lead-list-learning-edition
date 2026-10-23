@@ -30,6 +30,8 @@ class ProcessScope:
         self.api.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
         self.api.OpenProcess.restype = wintypes.HANDLE
         self.api.CloseHandle.argtypes = [wintypes.HANDLE]
+        self.api.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        self.api.TerminateJobObject.restype = wintypes.BOOL
         self.handle = self.api.CreateJobObjectW(None, None)
         info = Extended()
         info.basic.flags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
@@ -68,9 +70,22 @@ class ProcessScope:
                 self.api.CloseHandle(handle)
 
     def close(self):
+        error = None
         for child in self.children:
-            child.close()
+            try:
+                child.close()
+            except OSError as exc:
+                error = error or exc
         self.children.clear()
         if self.handle:
-            self.api.CloseHandle(self.handle)
+            handle = self.handle
             self.handle = None
+            try:
+                # Closing a handle only terminates the job after its last
+                # reference disappears. The owner must explicitly stop its tree.
+                if not self.api.TerminateJobObject(handle, 0):
+                    error = error or ctypes.WinError(ctypes.get_last_error())
+            finally:
+                self.api.CloseHandle(handle)
+        if error:
+            raise error

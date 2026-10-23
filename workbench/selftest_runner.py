@@ -162,7 +162,9 @@ class Runner:
             with self.measure("playwright_start"):
                 self.pw = sync_playwright().start()
             with self.measure("browser_start"):
-                self.browser = self.pw.chromium.launch()
+                # Exercise the full bundled Chromium on Windows; the separate
+                # headless shell can outlive forced diagnostic teardown there.
+                self.browser = self.pw.chromium.launch(channel="chromium" if os.name == "nt" else None)
         return self.browser
 
     def close(self):
