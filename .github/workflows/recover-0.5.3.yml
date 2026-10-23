@@ -1,0 +1,121 @@
+name: Recover verified 0.5.3 publication
+on:
+  push:
+    branches: [release/recover-0.5.3]
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  recover:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    env:
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: v0.5.3
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff
+        with:
+          version: '0.12.5'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.22.3'
+      - name: Verify immutable source and reviewed CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ((git rev-parse HEAD) -ne '1e2cfec27908bc296753c50be9a61e971008e66a') { throw 'The immutable tag changed' }
+          foreach ($job in @('120277471547','120284811558')) {
+            $result = gh api "repos/jerryrenjianxing-sys/lead-list-learning-edition/actions/jobs/$job" --jq .conclusion
+            if ($LASTEXITCODE -ne 0 -or $result -ne 'success') { throw 'Reviewed source or harness CI did not pass' }
+          }
+          New-Item -ItemType Directory -Path .cache/recovery-053 -Force | Out-Null
+          git show f621bffb4faca7090ae76bee2a009a657ba6f18f:tests/electron_upgrade_smoke.py | Set-Content .cache/recovery-053/reviewed-gate.py -Encoding utf8
+          if ($LASTEXITCODE -ne 0) { throw 'Reviewed harness is missing' }
+          @'
+          import importlib.util
+          from pathlib import Path
+          import sys
+          root=Path.cwd()
+          spec=importlib.util.spec_from_file_location('reviewed_gate',root/'.cache/recovery-053/reviewed-gate.py')
+          module=importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          module.ROOT=root
+          module.CACHE=(root/'.cache').resolve()
+          sys.path.insert(0,str(root))
+          module.main()
+          '@ | Set-Content .cache/recovery-053/run-gate.py -Encoding utf8
+      - name: Build the unchanged tagged product
+        run: ./packaging/build-windows-release.ps1 -Tag v0.5.3
+      - name: Verify both migrations, private update and rollback
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          .venv/Scripts/python.exe packaging/prepare_test_release.py --source build/MediaWorkbench --output .cache/recovery-053/private-next
+          if ($LASTEXITCODE -ne 0) { throw 'Private fixture failed' }
+          $private = Get-Content .cache/recovery-053/private-next/PRIVATE_TEST_RESULT.json -Raw | ConvertFrom-Json
+          $setup = (Resolve-Path release/0.5.3/MediaWorkbench.Desktop-win-preview-Setup.exe).Path
+          $package = (Resolve-Path release/0.5.3/MediaWorkbench.Desktop-0.5.3-win-preview-full.nupkg).Path
+          $hashes = @{
+            '0.4.3' = '7a582764a6dba5d4d6aaf1d1cfcc13265ebd86f7a316b77f33ec69663525b50f'
+            '0.4.4' = '00f7b622c53c083d351380dcb211f099bc8b5f306d25309e58407820b068c585'
+          }
+          foreach ($baseline in @('0.4.3','0.4.4')) {
+            $directory = Join-Path $PWD ".cache/recovery-053/baseline-$baseline"
+            New-Item -ItemType Directory -Path $directory | Out-Null
+            gh release download "v$baseline" --repo jerryrenjianxing-sys/lead-list-learning-edition --pattern 'MediaWorkbench.Desktop-win-preview-Setup.exe' --dir $directory
+            if ($LASTEXITCODE -ne 0) { throw 'Baseline download failed' }
+            $old = Join-Path $directory 'MediaWorkbench.Desktop-win-preview-Setup.exe'
+            if ((Get-FileHash -LiteralPath $old -Algorithm SHA256).Hash.ToLowerInvariant() -ne $hashes[$baseline]) { throw 'Baseline checksum mismatch' }
+            .venv/Scripts/python.exe .cache/recovery-053/run-gate.py --baseline-version $baseline --old-setup $old --new-setup $setup --new-package $package --version 0.5.3 --next-package $private.package --next-version $private.version --output ".cache/recovery-053/upgrade-$baseline.json"
+            if ($LASTEXITCODE -ne 0) { throw "Upgrade acceptance failed: $baseline" }
+          }
+      - name: Verify actual native updater and installed runtimes
+        run: |
+          $app = (Resolve-Path build/MediaWorkbench).Path
+          $setup = (Resolve-Path release/0.5.3/MediaWorkbench.Desktop-win-preview-Setup.exe).Path
+          $private = Get-Content .cache/recovery-053/private-next/PRIVATE_TEST_RESULT.json -Raw | ConvertFrom-Json
+          npm.cmd --prefix electron run update-smoke -- --directory $app --setup $setup --next-package $private.package --output (Join-Path $PWD '.cache/recovery-053/native-update.json')
+          if ($LASTEXITCODE -ne 0) { throw 'Native updater failed' }
+          npm.cmd --prefix electron run smoke -- --directory $app --output (Join-Path $PWD 'release/0.5.3/ELECTRON_TEST_RESULT.json')
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop checks failed' }
+          node electron/tests/skill-file.cjs --directory $app --output (Join-Path $PWD 'release/0.5.3/SKILL_FILE_RESULT.json')
+          if ($LASTEXITCODE -ne 0) { throw 'Skill file checks failed' }
+          .venv/Scripts/python.exe tests/electron_desktop_smoke.py --directory $app --output release/0.5.3/ELECTRON_LIFECYCLE_RESULT.json
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop lifecycle failed' }
+          .venv/Scripts/python.exe packaging/verify_selftest.py --directory $app --output release/0.5.3/SELF_TEST_RESULT.json
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged diagnostics failed' }
+      - name: Collect audited delivery without changing the tag
+        run: |
+          @{version='0.5.3';product_source='1e2cfec27908bc296753c50be9a61e971008e66a';reviewed_harness='f621bffb4faca7090ae76bee2a009a657ba6f18f';harness_pull_request='https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/pull/2';original_workflow='https://github.com/jerryrenjianxing-sys/lead-list-learning-edition/actions/runs/39912185686';original_failure='Upgrade gate omitted the approved schema6 job_retry_plans table';revalidation='passed';product_and_tag_unchanged=$true} | ConvertTo-Json | Set-Content release/0.5.3/ACCEPTANCE_HARNESS_FIX.json -Encoding utf8
+          .venv/Scripts/python.exe packaging/collect_delivery.py --version 0.5.3 --upgrade-result .cache/recovery-053/upgrade-0.4.3.json --additional-upgrade-result .cache/recovery-053/upgrade-0.4.4.json --native-update-result .cache/recovery-053/native-update.json
+          if ($LASTEXITCODE -ne 0) { throw 'Delivery integrity failed' }
+          if (git status --porcelain) { throw 'Tagged source was modified' }
+      - name: Preserve verified assets
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: verified-recovery-0.5.3
+          path: release/0.5.3/**
+          retention-days: 3
+          compression-level: 0
+      - name: Upload, verify and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .venv/Scripts/python.exe packaging/publish_github.py --tag v0.5.3
+      - name: Preserve failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: recovery-0.5.3-diagnostics
+          path: |
+            release/0.5.3/*RESULT.json
+            release/0.5.3/build-integrity.json
+            .cache/recovery-053/upgrade-*.json
+            .cache/recovery-053/native-update.json
+          if-no-files-found: ignore
