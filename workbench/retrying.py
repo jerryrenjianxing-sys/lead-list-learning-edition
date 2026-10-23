@@ -170,6 +170,8 @@ def release_due(con: Connection, availability: Availability) -> None:
             if all(wait['state']=='available' for wait in waits):
                 availability.resume_waiting(con,job['platform'],account(con,job['platform']),waits[-1]['operation_id'])
             else:
+                if availability.has_pending_check(con,job['platform'],[wait['capability'] for wait in waits if wait['state']!='available']):
+                    continue
                 # Inconclusive controls must get a new saved wait, rather than
                 # leaving an expired timer with no future operation to release it.
                 delay=choose(plan);deadline=epoch+delay

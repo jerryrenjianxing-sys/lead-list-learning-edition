@@ -167,6 +167,66 @@ def test_inconclusive_control_saves_next_retry_instead_of_stranding(tmp_path,mon
         wait_job(c,job['id'],lambda j:j['attempt']==2)
 
 
+def test_due_timer_preserves_a_control_already_queued(tmp_path,monkeypatch):
+    app,c=client_for(tmp_path)
+    epoch=[time.time()]
+    probe_epoch=[epoch[0]]
+    monkeypatch.setattr('workbench.retrying.time.time',lambda:epoch[0])
+    app.state.availability.clock=lambda:probe_epoch[0]
+    probe="import pathlib,sys;pathlib.Path(sys.argv[1]).write_text('{\"verdict\":\"available\",\"reason\":\"control_success\",\"attempted\":true,\"requests\":1}')"
+    command=lambda identity,result:[sys.executable,'-c',probe,str(result)]
+    script="import os,sys;os.environ['MEDIAWORKBENCH_JOB_ID']=sys.argv[1];from tools.crawl_status import record;record('search','empty_response',scope='fixture')"
+    with workers(app,script,probe=command):
+        job=c.post('/api/v1/jobs',json={'platform':'dy','keywords':'fixture'}).json()
+        view=wait_job(c,job['id'],lambda j:j['state']=='waiting_retry')
+        deadline=datetime.fromisoformat(view['status_detail']['next_retry_at']).timestamp()
+        operation=view['status_detail']['operation_refs'][0]
+        # The control dispatcher observed the instant before the timer became
+        # due. The task dispatcher must not postpone the accepted operation.
+        epoch[0]=deadline+1
+        time.sleep(.5)
+        view=c.get('/api/v1/jobs/'+job['id']).json()
+        assert datetime.fromisoformat(view['status_detail']['next_retry_at']).timestamp()==pytest.approx(deadline,abs=.001,rel=0)
+        assert c.get('/api/v1/operations/'+operation).json()['state']=='accepted'
+        probe_epoch[0]=epoch[0]
+        wait_job(c,job['id'],lambda j:j['attempt']==2)
+
+
+@pytest.mark.parametrize('cooldown_seconds',[0,14400])
+def test_shared_control_uses_earliest_due_keyword(tmp_path,monkeypatch,cooldown_seconds):
+    app,c=client_for(tmp_path)
+    epoch=[time.time()]
+    monkeypatch.setattr('workbench.retrying.time.time',lambda:epoch[0])
+    app.state.availability.clock=lambda:epoch[0]
+    probe="import pathlib,sys;pathlib.Path(sys.argv[1]).write_text('{\"verdict\":\"available\",\"reason\":\"control_success\",\"attempted\":true,\"requests\":1}')"
+    command=lambda identity,result:[sys.executable,'-c',probe,str(result)]
+    script="import os,sys;os.environ['MEDIAWORKBENCH_JOB_ID']=sys.argv[1];from tools.crawl_status import record;record('search','empty_response',scope='fixture')"
+    with workers(app,script,probe=command):
+        first=c.post('/api/v1/jobs',json={'platform':'dy','keywords':'first'}).json()
+        wait_job(c,first['id'],lambda j:j['state']=='waiting_retry')
+        second=c.post('/api/v1/jobs',json={'platform':'dy','keywords':'second'}).json()
+        wait_job(c,second['id'],lambda j:j['state']=='waiting_retry')
+        configure(c,first['id'],next_retry_at=epoch[0]+7200)
+        configure(c,second['id'],next_retry_at=epoch[0]+5400)
+        started=epoch[0]
+        if cooldown_seconds:
+            app.state.db.execute("UPDATE access_state SET state='restricted',cooldown_until=?",(started+cooldown_seconds,))
+        epoch[0]+=5401
+        if cooldown_seconds:
+            # Neither another due task nor the source task's own timer can
+            # shorten the longer platform cooldown of an already queued check.
+            for due in (started+5401,started+7201):
+                epoch[0]=due
+                time.sleep(.4)
+                for job in (first,second):
+                    assert c.get('/api/v1/jobs/'+job['id']).json()['attempt']==1
+            epoch[0]=started+cooldown_seconds+1
+        wait_job(c,second['id'],lambda j:j['attempt']==2,timeout=5)
+        if not cooldown_seconds:
+            first_view=c.get('/api/v1/jobs/'+first['id']).json()
+            assert first_view['attempt']==1 and first_view['state']=='waiting_retry'
+
+
 def client_for(root):
     app=make_app(root,run_queue=False)
     authenticated(app)
