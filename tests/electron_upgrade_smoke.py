@@ -240,7 +240,7 @@ def snapshot(data):
 
 
 RECOVERY_TABLES = {'job_attempts','attempt_metrics','event_details','operations','collection_scopes','raw_commits',
-                   'access_checks','access_state','access_waits','access_samples','scope_metrics','scope_records','execution_sessions','access_replays'}
+                   'access_checks','access_state','access_waits','access_samples','scope_metrics','scope_records','execution_sessions','access_replays','job_retry_plans'}
 
 
 def preserved(data,before):
@@ -249,6 +249,8 @@ def preserved(data,before):
     assert {k:current['rows'][k] for k in before['rows']}==before['rows'],'Existing business rows changed'
     added=set(current['rows'])-set(before['rows'])
     assert added<=RECOVERY_TABLES,'Migration created an unrecognized business table'
+    if 'job_retry_plans' in added:
+        assert not current['rows']['job_retry_plans'],'Historical tasks gained automatic retry plans during migration'
     if added:
         with closing(sqlite3.connect(data/'workbench.sqlite3')) as con:
             assert con.execute('PRAGMA user_version').fetchone()[0]==6
