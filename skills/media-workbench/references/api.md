@@ -47,4 +47,6 @@ GET/PUT `/settings` 支持 browser_path、theme、update_feed；GET `/artifacts`
 
 `status_detail.retry.record_count`只统计内容、评论和回复（不含账号资料），`counts.dataset_total`保留全部类型的累计数。定时续接需要账号一致且认证有效；认证未确认时`blocked_reason`为`authentication_required`。0.5.3保留运行中指定的`next_retry_at`，并对`waiting_retry`同样执行原目标重复异常后的人工复核限制。
 
+访问对照提前成功时，到期仍须登记原生重放次数；检查返回网络错误、接口异常或不确定结果时，保存新的随机90–120分钟截止时间和检查操作，`blocked_reason`为`access_check_pending`，不保留无人处理的过期时间。
+
 `POST /jobs/{id}/retry-plan`：`{"enabled":true,"threshold":100,"min_seconds":5400,"max_seconds":7200,"schedule":true}`。可选`next_retry_at`为UTC Unix秒，用于接续已保存的等待；`schedule:false`只保存规则，不主动停止当前执行。每轮随机结果持久保存，重开不重抽。状态为`waiting_retry`，`status_detail.next_retry_at`给出UTC ISO时间，`status_detail.retry`给出规则。`stop`真正取消自动续接；`resume`显式立即恢复，原生访问和认证限制仍有效。不要再用`stop`接口表达系统安排的定时等待，也不要为同一关键词反复新建数据集。
