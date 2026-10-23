@@ -85,7 +85,8 @@ def test_running_pause_keeps_explicit_deadline_after_worker_exit(tmp_path):
         assert datetime.fromisoformat(saved).timestamp()==pytest.approx(deadline,abs=.001,rel=0)
 
 
-def test_control_success_does_not_bypass_target_replay_limit(tmp_path,monkeypatch):
+@pytest.mark.parametrize('early_control',[False,True])
+def test_control_success_does_not_bypass_target_replay_limit(tmp_path,monkeypatch,early_control):
     app,c=client_for(tmp_path)
     authenticated(app)
     epoch=[time.time()]
@@ -98,6 +99,17 @@ def test_control_success_does_not_bypass_target_replay_limit(tmp_path,monkeypatc
         job=c.post('/api/v1/jobs',json={'platform':'dy','keywords':'fixture'}).json()
         for attempt in (1,2):
             view=wait_job(c,job['id'],lambda j:j['attempt']==attempt and j['state']=='waiting_retry')
+            if early_control and attempt==1:
+                operation=view['status_detail']['operation_refs'][0]
+                assert c.post('/api/v1/operations/'+operation+'/cancel',json={}).status_code==200
+                control=c.post('/api/v1/platforms/dy/probes',json={'capability':'search'}).json()
+                end=time.monotonic()+5
+                while time.monotonic()<end:
+                    result=c.get('/api/v1/operations/'+control['id']).json()
+                    if result['state']=='completed':break
+                    time.sleep(.02)
+                assert result['verdict']=='available'
+                assert c.get('/api/v1/jobs/'+job['id']).json()['attempt']==1
             epoch[0]=datetime.fromisoformat(view['status_detail']['next_retry_at']).timestamp()+1
         view=wait_job(c,job['id'],lambda j:j['status_detail']['retry']['blocked_reason']=='manual_action',timeout=5)
         time.sleep(.4)

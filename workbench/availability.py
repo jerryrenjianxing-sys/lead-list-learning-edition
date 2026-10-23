@@ -457,6 +457,14 @@ class Availability:
                         automatic=True,
                         original_reason="request_rejected",
                     )
+            # A control may succeed before a task's timer. Release that saved
+            # wait through the same replay guard once the timer becomes due.
+            ready = con.execute(
+                "SELECT DISTINCT j.platform,w.account_id,s.operation_id FROM jobs j JOIN job_retry_plans p ON p.job_id=j.id JOIN access_waits w ON w.job_id=j.id JOIN access_state s ON s.platform=j.platform AND s.account_id=w.account_id AND s.capability=w.capability WHERE j.state='waiting_retry' AND p.enabled=1 AND p.next_retry_at<=? AND w.enabled=1 AND s.state='available' AND NOT EXISTS(SELECT 1 FROM operations o JOIN access_checks c ON c.operation_id=o.id WHERE o.platform=j.platform AND c.account_id=w.account_id AND o.state IN ('accepted','running','cancelling'))",
+                (self.clock(),),
+            ).fetchall()
+            for state in ready:
+                self._resume(con,state['platform'],state['account_id'],state['operation_id'])
             con.commit()
 
     def _resume(self, con, platform, account, operation_id):

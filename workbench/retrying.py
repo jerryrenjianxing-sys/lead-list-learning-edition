@@ -159,6 +159,9 @@ def release_due(con: Connection) -> None:
     for job in rows:
         plan=con.execute('SELECT * FROM job_retry_plans WHERE job_id=?',(job['id'],)).fetchone()
         if retry_gate(con,job,plan)['blocked_reason']:continue
+        # Access recovery owns the once-only replay receipt, including when a
+        # successful control preceded this timer. Never queue around that seam.
+        if con.execute('SELECT 1 FROM access_waits WHERE job_id=? AND enabled=1',(job['id'],)).fetchone():continue
         changed=con.execute("UPDATE jobs SET state='queued',error=NULL,updated=? WHERE id=? AND state='waiting_retry'",(now(),job['id'])).rowcount
         if changed:
             con.execute('UPDATE job_retry_plans SET next_retry_at=NULL,updated=? WHERE job_id=?',(now(),job['id']))
