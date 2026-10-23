@@ -10,7 +10,7 @@ import json
 import time
 import re
 from sqlite3 import Connection
-from typing import Literal, TypedDict
+from typing import Literal, Mapping, TypedDict
 
 from .database import digest, dump, now, uid
 
@@ -198,26 +198,19 @@ class Availability:
             ):
                 return None
             epoch = self.clock()
-            row = con.execute(
+            candidates = con.execute(
                 """SELECT o.*,c.environment,c.generation,c.account_id,c.control,c.original_reason,
                           c.automatic,c.source_job,c.source_attempt
                    FROM operations o JOIN access_checks c ON c.operation_id=o.id
                    WHERE o.state='accepted'
-                     AND (NOT EXISTS(SELECT 1 FROM job_retry_plans p
-                                     WHERE p.job_id=c.source_job AND p.enabled=1 AND p.next_retry_at>?)
-                          OR EXISTS(SELECT 1 FROM access_waits w JOIN jobs j ON j.id=w.job_id
-                                    JOIN job_retry_plans p ON p.job_id=j.id
-                                    WHERE j.platform=o.platform AND w.capability=o.capability
-                                      AND w.account_id=COALESCE(c.account_id,'') AND w.enabled=1
-                                      AND j.state='waiting_retry' AND p.enabled=1 AND p.next_retry_at<=?
-                                      AND (p.account_id IS NULL OR p.account_id=c.account_id)))
                      AND NOT EXISTS(SELECT 1 FROM access_state s WHERE s.platform=o.platform
                                     AND s.account_id=COALESCE(c.account_id,'') AND s.capability=o.capability
                                     AND ((s.state IN ('restricted','suspected_restriction') AND s.cooldown_until>?)
                                          OR (s.state='manual_action' AND (c.automatic=1 OR c.source_job IS NOT NULL))))
-                   ORDER BY o.created,o.id LIMIT 1""",
-                (epoch,epoch,epoch),
-            ).fetchone()
+                   ORDER BY o.created,o.id""",
+                (epoch,),
+            ).fetchall()
+            row = next((candidate for candidate in candidates if self._retry_check_ready(con,candidate,epoch)),None)
             if not row:
                 return None
             session = self._session(con, row["platform"])
@@ -247,6 +240,25 @@ class Availability:
             )
             con.commit()
             return dict(row)
+
+    def _retry_check_ready(self, con: Connection, check: Mapping, epoch: float) -> bool:
+        from .retrying import retry_gate
+        source_plan = con.execute('SELECT 1 FROM job_retry_plans WHERE job_id=? AND enabled=1',(check['source_job'],)).fetchone()
+        if not source_plan:
+            return True
+        waiters = con.execute(
+            "SELECT j.* FROM jobs j JOIN access_waits w ON w.job_id=j.id "
+            "JOIN job_retry_plans p ON p.job_id=j.id "
+            "WHERE j.platform=? AND w.capability=? AND w.account_id=? AND w.enabled=1 "
+            "AND j.state='waiting_retry' AND p.enabled=1 AND p.next_retry_at<=?",
+            (check['platform'],check['capability'],check['account_id'] or '',epoch),
+        ).fetchall()
+        for job in waiters:
+            plan = con.execute('SELECT * FROM job_retry_plans WHERE job_id=?',(job['id'],)).fetchone()
+            gate = retry_gate(con,job,plan)
+            if gate['blocked_reason'] in ('','access_check_pending','access_recheck') and gate['next_retry_at'] is not None and gate['next_retry_at']<=epoch:
+                return True
+        return False
 
     def has_pending_check(self, con: Connection, platform: str, capabilities: list[str]) -> bool:
         if not capabilities:

@@ -227,6 +227,38 @@ def test_shared_control_uses_earliest_due_keyword(tmp_path,monkeypatch,cooldown_
             assert first_view['attempt']==1 and first_view['state']=='waiting_retry'
 
 
+@pytest.mark.parametrize('blocked',['manual_action','authentication_required'])
+def test_blocked_waiter_cannot_trigger_a_shared_control(tmp_path,monkeypatch,blocked):
+    app,c=client_for(tmp_path)
+    epoch=[time.time()]
+    monkeypatch.setattr('workbench.retrying.time.time',lambda:epoch[0])
+    app.state.availability.clock=lambda:epoch[0]
+    probe="import pathlib,sys;pathlib.Path(sys.argv[1]).write_text('{\"verdict\":\"available\",\"reason\":\"control_success\",\"attempted\":true,\"requests\":1}')"
+    command=lambda identity,result:[sys.executable,'-c',probe,str(result)]
+    script="import os,sys;os.environ['MEDIAWORKBENCH_JOB_ID']=sys.argv[1];from tools.crawl_status import record;record('search','empty_response',scope='fixture')"
+    with workers(app,script,probe=command):
+        first=c.post('/api/v1/jobs',json={'platform':'dy','keywords':'first'}).json()
+        first_view=wait_job(c,first['id'],lambda j:j['state']=='waiting_retry')
+        operation=first_view['status_detail']['operation_refs'][0]
+        second=c.post('/api/v1/jobs',json={'platform':'dy','keywords':'second'}).json()
+        wait_job(c,second['id'],lambda j:j['state']=='waiting_retry')
+        configure(c,first['id'],next_retry_at=epoch[0]+7200)
+        configure(c,second['id'],next_retry_at=epoch[0]+5400)
+        if blocked=='manual_action':
+            app.state.db.execute('UPDATE jobs SET error=? WHERE id=?',('对照读取成功，但原目标重试后仍异常，需要人工处理',second['id']))
+        else:
+            app.state.db.execute("UPDATE platform_sessions SET check_state='unknown'")
+        epoch[0]+=5401
+        time.sleep(.5)
+        assert c.get('/api/v1/jobs/'+second['id']).json()['status_detail']['retry']['blocked_reason']==blocked
+        assert c.get('/api/v1/operations/'+operation).json()['state']=='accepted'
+        # Restore only the eligibility boundary; the same saved operation runs.
+        app.state.db.execute('UPDATE jobs SET error=NULL WHERE id=?',(second['id'],))
+        app.state.db.execute("UPDATE platform_sessions SET check_state='authenticated'")
+        wait_job(c,second['id'],lambda j:j['attempt']==2)
+        assert c.get('/api/v1/jobs/'+first['id']).json()['attempt']==1
+
+
 def client_for(root):
     app=make_app(root,run_queue=False)
     authenticated(app)
