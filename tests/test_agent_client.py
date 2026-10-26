@@ -184,6 +184,15 @@ def test_fresh_client_connects_from_arbitrary_cwd_without_diagnostics(tmp_path):
                                 cwd=outside,env=env,capture_output=True,encoding='utf-8',timeout=15)
         assert result.returncode == 0, result.stdout+result.stderr
         assert json.loads(result.stdout)['reason_code']=='probe_not_enabled'
+        app.state.db.execute("INSERT OR REPLACE INTO platform_sessions(platform,account_id,generation,check_state) VALUES('dy','cli-fixture-account',1,'authenticated')")
+        app.state.db.execute("INSERT INTO access_state VALUES('dy','cli-fixture-account','search','manual_action','empty_response',NULL,3,'fixture',NULL)")
+        restart_command=[sys.executable,str(fresh),'--instance',str(discovery),'probe','dy','search','--restart-cycle','--no-wait','--request-id','cli-explicit-restart']
+        result=subprocess.run(restart_command,cwd=outside,env=env,capture_output=True,encoding='utf-8',timeout=15)
+        assert result.returncode==0,result.stdout+result.stderr
+        restarted=json.loads(result.stdout)
+        assert restarted['state']=='accepted'
+        repeated=subprocess.run(restart_command,cwd=outside,env=env,capture_output=True,encoding='utf-8',timeout=15)
+        assert repeated.returncode==0 and json.loads(repeated.stdout)==restarted
         request_file = outside / "请求.json"
         request_file.write_text('{"name":"concurrent CLI","records":[]}', encoding="utf-8")
         command = [sys.executable, str(fresh), "--instance", str(discovery), "api", "POST",
