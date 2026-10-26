@@ -6,6 +6,17 @@ from types import SimpleNamespace
 import pytest
 
 
+def test_recovery_upgrade_proof_requires_both_repairs_and_redacts_paths(publisher):
+    proof={'ok':True,'version':'0.5.4','baseline_version':'0.5.3','next_version':'0.5.5',
+           'cleanup_complete':True,'checks':['full-installer-exhausted-state-repaired','native-package-update-exhausted-state-repaired'],
+           'limitations':[],'directory':'private-machine-path'}
+    collect=sys.modules['collect_delivery']
+    public=collect.public_recovery_upgrade_summary(proof,'0.5.4')
+    assert 'directory' not in public
+    with pytest.raises(RuntimeError,match='repair'):
+        collect.public_recovery_upgrade_summary({**proof,'checks':proof['checks'][:1]},'0.5.4')
+
+
 @pytest.fixture
 def publisher(monkeypatch):
     folder = Path(__file__).resolve().parents[1] / "packaging"

@@ -7,8 +7,19 @@ from pathlib import Path
 import shutil
 import subprocess
 import zipfile
+from typing import Any, Mapping, TypedDict, cast
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class UpgradeSummary(TypedDict):
+    ok: bool
+    version: str
+    baseline_version: str
+    next_version: str
+    cleanup_complete: bool
+    checks: list[str]
+    limitations: list[str]
 
 
 def upgrade_baseline(version):
@@ -58,6 +69,14 @@ def public_upgrade_summary(result, version, baseline=None):
     return {key: result[key] for key in ("ok", "version", "baseline_version", "next_version", "cleanup_complete", "checks", "limitations")}
 
 
+def public_recovery_upgrade_summary(result: Mapping[str, Any], version: str) -> UpgradeSummary:
+    public = cast(UpgradeSummary, public_upgrade_summary(result,version,'0.5.3'))
+    required={'full-installer-exhausted-state-repaired','native-package-update-exhausted-state-repaired'}
+    if not required<=set(public['checks']):
+        raise RuntimeError('The 0.5.3 upgrade must repair exhausted state in both installer paths')
+    return public
+
+
 def public_upgrade_matrix(primary,additional,version):
     required=['0.4.3','0.4.4']
     proofs={proof.get('baseline_version'):proof for proof in [primary,*additional]}
@@ -83,8 +102,12 @@ def main():
     parser.add_argument("--upgrade-result", type=Path)
     parser.add_argument('--additional-upgrade-result',type=Path,action='append',default=[])
     parser.add_argument("--native-update-result", type=Path)
+    parser.add_argument('--recovery-upgrade-result',type=Path)
     args = parser.parse_args()
     release = Path(args.release_directory) if args.release_directory else ROOT / "release" / args.version
+    if args.recovery_upgrade_result:
+        proof=public_recovery_upgrade_summary(json.loads(args.recovery_upgrade_result.read_text(encoding='utf-8')),args.version)
+        (release/'ELECTRON_053_UPGRADE_RESULT.json').write_text(json.dumps(proof,ensure_ascii=False,indent=2),encoding='utf-8',newline='\n')
     if args.upgrade_result:
         raw=json.loads(args.upgrade_result.read_text(encoding='utf-8'))
         result=(public_upgrade_matrix(raw,[json.loads(p.read_text(encoding='utf-8')) for p in args.additional_upgrade_result],args.version)

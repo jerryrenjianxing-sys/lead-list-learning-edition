@@ -81,8 +81,10 @@ def retry_gate(con: Connection, job: Mapping, plan: Mapping) -> RetryGate:
     elif (job['error'] or '').startswith('对照读取成功，但原目标重试后仍异常'):
         reason = 'manual_action'
     elif job['platform'] == 'dy':
-        blocks = con.execute("SELECT state,cooldown_until FROM access_state WHERE platform=? AND account_id=? AND state IN ('restricted','suspected_restriction','manual_action')", (job['platform'], current_account)).fetchall()
-        if any(block['state'] == 'manual_action' for block in blocks):
+        from .availability import requires_manual_review
+        states = con.execute("SELECT state,cooldown_until,checks FROM access_state WHERE platform=? AND account_id=?", (job['platform'], current_account)).fetchall()
+        blocks = [s for s in states if s['state'] in ('restricted','suspected_restriction','manual_action')]
+        if any(requires_manual_review(s) for s in states):
             reason = 'manual_action'
         elif blocks:
             reason = 'access_recheck'

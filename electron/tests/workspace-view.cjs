@@ -39,10 +39,18 @@ async function main() {
     let failDiagnostics = false, failJobs = false, datasetsOnly = false, jobMode = 'normal', retryAuth = false;
     let savedBrowserPath = 'C:/fixture-only/Chrome.exe', releaseSettingsSave;
     const unrelatedReads = [];
+    let manualView = false;
+    const restartPayloads = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.route('**/api/v1/**', async route => {
       const url = new URL(route.request().url());
       const routePath = url.pathname.slice('/api/v1'.length);
+      if (manualView && routePath === '/jobs') return route.fulfill({ json: { items: [{ id:'fixture-job',platform:'dy',state:'waiting_retry',created:'2026-10-26T00:00:00Z',attempt:3,options:{crawler_type:'search',keywords:'耗尽夹具'},status_detail:{counts:{inserted:0,updated:0,unchanged:0,dataset_total:544},range_verified:false,explanation:'自动复查次数已耗尽，需要人工复核。',next_retry_at:null,retry:{enabled:1,threshold:999,blocked_reason:'manual_action'},next_actions:[{id:'stop',label:'停止自动续接',enabled:true}]}}] } });
+      if (manualView && routePath === '/platforms') return route.fulfill({ json: {items:[{id:'dy',name:'抖音',login_state:'authenticated',saved_session:true,last_check:{state:'authenticated'},availability:{automatic_checks_enabled:true,items:[{capability:'replies',state:'manual_action',checks:3,reason:'empty_response',cooldown_until:null}]}}]} });
+      if (manualView && routePath === '/platforms/dy/probes') {
+        restartPayloads.push(route.request().postDataJSON());
+        return route.fulfill({ json: {id:'restart-fixture',state:'accepted'} });
+      }
       if (routePath === '/settings' && route.request().method() === 'PUT') {
         const submitted = route.request().postDataJSON().browser_path;
         await new Promise(resolve => { releaseSettingsSave = resolve; });
@@ -173,6 +181,16 @@ async function main() {
     await page.getByText('已停止', { exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: '停止自动续接', exact: true }).count(), 0);
     checks.push('Stopping a waiting task changes its visible state without creating a replacement task');
+    manualView = true;
+    await page.getByRole('button', { name:'采集任务',exact:true }).click();
+    await page.locator('.wb-status.state-manual_action').waitFor();
+    await page.getByText('下次重试：等待人工复核', {exact:false}).waitFor();
+    assert.equal(await page.locator('.wb-status.state-waiting_retry').count(),0);
+    await page.getByRole('button', { name:'平台登录',exact:true }).click();
+    await page.getByRole('button',{name:'重新开启回复复查周期',exact:true}).click();
+    await until(()=>restartPayloads.length===1,'The explicit restart must send one request');
+    assert.deepEqual(restartPayloads,[{capability:'replies',restart_cycle:true}]);
+    checks.push('Exhausted tasks show manual review without a false deadline; explicit restart sends its opt-in flag');
     assert.deepEqual(errors, []);
     const directory = path.join(repo, '.cache/architecture-meeting');
     await fs.mkdir(directory, { recursive: true });

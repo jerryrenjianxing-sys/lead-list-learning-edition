@@ -41,6 +41,10 @@ GET/PUT `/settings` 支持 browser_path、theme、update_feed；GET `/artifacts`
 以上是接口示例，用户可组合为任意分析流程。软件没有内置模型或固定业务判断器。
 
 
+## 0.5.4 显式重开复查周期
+
+`POST /platforms/{platform}/probes` 新增可选 `restart_cycle`，默认false，例：`{"capability":"replies","restart_cycle":true}`。仅在抖音当前账号认证有效、周期已耗尽且用户明确要求重开时使用。响应仍为原操作编号、状态及复用标记；相同请求编号或活动检查不会重复清零。普通检查失败、登录和重启不清次数。耗尽后 `blocked_reason=manual_action`、`next_retry_at=null`；检查中的实际进度从原操作读取。
+
 ## 0.5.2 原生重试计划
 
 搜索任务默认`retry_threshold: 100`：同一数据集累计去重内容、评论和回复不超过100条视为未跑通，随机等待90–120分钟，继续原任务及原数据集。`retry_threshold: null`显式关闭此规则；它是判定阈值，不是采集数量上限。登录及其他任务类型不使用此阈值。

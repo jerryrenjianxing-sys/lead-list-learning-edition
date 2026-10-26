@@ -506,6 +506,8 @@ class Recovery:
             "SELECT o.id,o.state FROM access_checks c JOIN operations o ON o.id=c.operation_id WHERE c.source_job=? AND c.source_attempt=? ORDER BY o.created DESC",
             (job["id"], job["attempt"]),
         )
+        from .availability import capability_view
+        access = [capability_view(item) for item in access]
         blocked = any(
             item["state"] in ("restricted", "suspected_restriction", "manual_action")
             for item in access

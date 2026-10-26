@@ -74,8 +74,9 @@ jobs:
           $baselines = @{
             '0.4.3' = '7a582764a6dba5d4d6aaf1d1cfcc13265ebd86f7a316b77f33ec69663525b50f'
             '0.4.4' = '00f7b622c53c083d351380dcb211f099bc8b5f306d25309e58407820b068c585'
+            '0.5.3' = '3eef4e69b92663096bd1ee49ccd56d428f88aaa7fee5c58ca33676abc8a5aa4c'
           }
-          foreach ($baseline in @('0.4.3', '0.4.4')) {
+          foreach ($baseline in @('0.4.3', '0.4.4', '0.5.3')) {
             $legacy = Join-Path $PWD ".cache/baseline-$baseline"
             New-Item -ItemType Directory -Path $legacy -Force | Out-Null
             gh release download "v$baseline" --repo jerryrenjianxing-sys/lead-list-learning-edition --pattern 'MediaWorkbench.Desktop-win-preview-Setup.exe' --dir $legacy
@@ -85,7 +86,7 @@ jobs:
             .venv/Scripts/python.exe tests/electron_upgrade_smoke.py --baseline-version $baseline --old-setup $oldSetup --new-setup ($setups[0].FullName) --new-package (Join-Path $release ($full[0].FileName)) --version $version --next-package $private.package --next-version $private.version --output ".cache/upgrade-$baseline-raw.json"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
-          .venv/Scripts/python.exe packaging/collect_delivery.py --version $version --upgrade-result .cache/upgrade-0.4.3-raw.json --additional-upgrade-result .cache/upgrade-0.4.4-raw.json
+          .venv/Scripts/python.exe packaging/collect_delivery.py --version $version --upgrade-result .cache/upgrade-0.4.3-raw.json --additional-upgrade-result .cache/upgrade-0.4.4-raw.json --recovery-upgrade-result .cache/upgrade-0.5.3-raw.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify the actual native desktop updater
         run: |
