@@ -7,8 +7,19 @@ from pathlib import Path
 import shutil
 import subprocess
 import zipfile
+from typing import Any, Mapping, TypedDict, cast
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class UpgradeSummary(TypedDict):
+    ok: bool
+    version: str
+    baseline_version: str
+    next_version: str
+    cleanup_complete: bool
+    checks: list[str]
+    limitations: list[str]
 
 
 def upgrade_baseline(version):
@@ -58,8 +69,8 @@ def public_upgrade_summary(result, version, baseline=None):
     return {key: result[key] for key in ("ok", "version", "baseline_version", "next_version", "cleanup_complete", "checks", "limitations")}
 
 
-def public_recovery_upgrade_summary(result: dict, version: str) -> dict:
-    public = public_upgrade_summary(result,version,'0.5.3')
+def public_recovery_upgrade_summary(result: Mapping[str, Any], version: str) -> UpgradeSummary:
+    public = cast(UpgradeSummary, public_upgrade_summary(result,version,'0.5.3'))
     required={'full-installer-exhausted-state-repaired','native-package-update-exhausted-state-repaired'}
     if not required<=set(public['checks']):
         raise RuntimeError('The 0.5.3 upgrade must repair exhausted state in both installer paths')
