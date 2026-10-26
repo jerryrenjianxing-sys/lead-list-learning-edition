@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import time
 import tomllib
-from collect_delivery import full_package, upgrade_baseline
+from collect_delivery import full_package, upgrade_baseline, public_recovery_upgrade_summary
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = "jerryrenjianxing-sys/lead-list-learning-edition"
@@ -98,6 +98,8 @@ def main():
         if policy.get("publication") != "preview" or policy.get("version") != version:
             raise RuntimeError("Publication requires the approved preview version")
     directory = ROOT / "release" / version
+    if tuple(map(int,version.split('.'))) >= (0,5,4):
+        public_recovery_upgrade_summary(json.loads((directory/'ELECTRON_053_UPGRADE_RESULT.json').read_text(encoding='utf-8')),version)
     integrity = json.loads((directory / "build-integrity.json").read_text())
     check = json.loads((directory / "SELF_TEST_RESULT.json").read_text(encoding="utf-8"))
     desktop_check = json.loads((directory / "ELECTRON_TEST_RESULT.json").read_text(encoding="utf-8"))

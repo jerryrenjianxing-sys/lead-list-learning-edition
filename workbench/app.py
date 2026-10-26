@@ -380,7 +380,10 @@ def make_app(root=None, *, run_queue=True):
     def platform_probe(platform: str, body: ProbeRequest, request: Request):
         if platform not in PLATFORMS:
             raise HTTPException(404)
-        return write(request,body.model_dump(),lambda con: availability.request(con,platform,body.capability,restart_cycle=body.restart_cycle))
+        values={'capability':body.capability}
+        if body.restart_cycle:
+            values['restart_cycle']=True
+        return write(request,values,lambda con: availability.request(con,platform,body.capability,restart_cycle=body.restart_cycle))
 
     @app.get('/api/v1/platforms/{platform}/availability')
     def availability_status(platform: str):

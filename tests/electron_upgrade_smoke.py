@@ -438,6 +438,8 @@ def execute(args):
                     checks.append("broken-package-keeps-old-installation-and-data")
                     native_apply(install, args.new_package.resolve(), env, case)
                 verify_new(app, env, data, instance, before, args.version,exhausted=args.baseline_version=='0.5.3')
+                if args.baseline_version=='0.5.3':
+                    checks.append(mode+'-exhausted-state-repaired')
                 checks.append(mode + "-" + args.baseline_version + "-to-" + args.version)
                 if mode == "native-package-update" and args.next_package is not None:
                     migrated=snapshot(data)
@@ -480,7 +482,7 @@ def execute(args):
                 uninstall(install, env, registration)
                 registration.restore()
                 registration.verify()
-            preserved(data,before)
+            (preserved_exhausted if args.baseline_version=='0.5.3' else preserved)(data,before)
             checks.append(mode + "-uninstall-retains-business-data-and-login-fixture")
     finally:
         registration.restore()

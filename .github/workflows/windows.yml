@@ -86,8 +86,7 @@ jobs:
             .venv/Scripts/python.exe tests/electron_upgrade_smoke.py --baseline-version $baseline --old-setup $oldSetup --new-setup ($setups[0].FullName) --new-package (Join-Path $release ($full[0].FileName)) --version $version --next-package $private.package --next-version $private.version --output ".cache/upgrade-$baseline-raw.json"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
-          Copy-Item .cache/upgrade-0.5.3-raw.json (Join-Path $release 'ELECTRON_053_UPGRADE_RESULT.json')
-          .venv/Scripts/python.exe packaging/collect_delivery.py --version $version --upgrade-result .cache/upgrade-0.4.3-raw.json --additional-upgrade-result .cache/upgrade-0.4.4-raw.json
+          .venv/Scripts/python.exe packaging/collect_delivery.py --version $version --upgrade-result .cache/upgrade-0.4.3-raw.json --additional-upgrade-result .cache/upgrade-0.4.4-raw.json --recovery-upgrade-result .cache/upgrade-0.5.3-raw.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify the actual native desktop updater
         run: |

@@ -158,6 +158,16 @@ def test_concurrent_restart_requests_share_one_check(tmp_path):
     assert cap['checks']==0
 
 
+def test_legacy_probe_receipt_replays_after_upgrade(tmp_path):
+    app,client=client_for(tmp_path)
+    body={'capability':'search'}
+    legacy=app.state.db.write('old-probe-request','POST /api/v1/platforms/dy/probes',body,
+        lambda con:{'id':'historical-operation','state':'completed','reused':False})
+    response=client.post('/api/v1/platforms/dy/probes',json=body,headers={'Idempotency-Key':'old-probe-request'})
+    assert response.status_code==200,response.text
+    assert response.json()==legacy
+
+
 def test_interrupted_restart_keeps_its_count_and_operation_history(tmp_path):
     app,client=client_for(tmp_path)
     job=legacy_exhausted(app,client)
