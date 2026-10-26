@@ -48,7 +48,7 @@ export default function PlatformLogin({
   stop: (id: string) => void;
   action: (id: string, action: string) => void;
   resume: (id: string) => void;
-  probe: (id: string,capability: string) => void;
+  probe: (id: string,capability: string,restartCycle?: boolean) => void;
   cancelOperation: (id: string) => void;
 }) {
   const [forgetting, setForgetting] = useState<string | null>(null);
@@ -160,6 +160,8 @@ export default function PlatformLogin({
                   {capabilityNames[a.capability] || a.capability}：{availabilityNames[a.state] || a.state}
                   {a.cooldown_until && <small>下次复查：{new Date(a.cooldown_until * 1000).toLocaleString("zh-CN")} · 已自动复查 {a.checks} 次；重新登录不会清空等待。</small>}
                   {a.reason && <small>原因：{a.reason}</small>}
+                  {a.state === "manual_action" && a.retry_not_before && <small>最早可手动重开：{new Date(a.retry_not_before * 1000).toLocaleString("zh-CN")}；不会自动重试。</small>}
+                  {a.state === "manual_action" && a.checks >= 3 && <><small>自动复查次数已用完。明确重开才会开始新一轮 1／2／4 小时复查。</small><button disabled={working || p.login_state !== "authenticated" || operation && ["accepted","running","cancelling"].includes(operation.state)} onClick={() => probe(p.id,a.capability,true)}>重新开启{capabilityNames[a.capability]}复查周期</button></>}
                 </p>)}
               </div>}
               <div className="wb-login-actions">

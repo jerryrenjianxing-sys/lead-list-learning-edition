@@ -1,5 +1,5 @@
 {
   "publication": "preview",
-  "version": "0.5.3",
-  "reason": "The user requested the 0.5.3 GitHub release and local installation on 2026-10-23 after the native retry review. Publish only after clean-source Windows checks, packaged diagnostics, desktop lifecycle, dual 0.4.3/0.4.4 migration and private next-patch update acceptance. Retain all old tags and rollback v0.4.3, freeze dependencies, and update the local installation only after backup and when idle."
+  "version": "0.5.4",
+  "reason": "The user approved the exhausted-recovery repair, Matt Standards and Spec review, public 0.5.4 preview, idle backed-up local upgrade and explicit restart of the 36 unfinished campaign tasks on 2026-10-26. Require clean-source Windows, packaged diagnostics, desktop lifecycle, 0.5.3 state repair, historical 0.4.3/0.4.4 migration, 0.4.3 rollback and private 0.5.5 update acceptance. Preserve all old releases and frozen dependencies."
 }

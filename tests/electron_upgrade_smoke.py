@@ -300,6 +300,40 @@ assert Path(store.get("dy")["browser"]).is_file()
 print(json.dumps({"ok":True,"snapshot_decrypts":True,"browser_binding_exists":True}))
 '''
 
+EXHAUSTED_SEED = '''
+import sys,time
+from pathlib import Path
+from workbench.database import Database,dump,now
+db=Database(Path(sys.argv[1]))
+dataset=db.query('SELECT id FROM datasets LIMIT 1')[0]['id']
+stamp=now()
+db.execute("INSERT INTO jobs(id,platform,state,options,dataset_id,created,updated) VALUES(?,?,?,?,?,?,?)",('exhausted-upgrade','dy','waiting_retry',dump({'crawler_type':'search','keywords':'synthetic-only'}),dataset,stamp,stamp))
+db.execute("INSERT INTO job_retry_plans VALUES('exhausted-upgrade',1,999,5400,7200,?,NULL,'collection_incomplete','upgrade-fixture-account',?)",(time.time()-10,stamp))
+db.execute("INSERT INTO access_state VALUES('dy','upgrade-fixture-account','replies','suspected_restriction','empty_response',?,3,?,NULL)",(time.time()-10,stamp))
+db.execute("INSERT INTO access_waits VALUES('exhausted-upgrade','replies','upgrade-fixture-account',1,?)",(stamp,))
+'''
+
+
+def preserved_exhausted(data, before):
+    """Only the declared capability repair and its single audit event may differ."""
+    current=snapshot(data)
+    assert current['files']==before['files']
+    assert set(current['rows'])==set(before['rows'])
+    for table,rows in before['rows'].items():
+        if table not in ('access_state','events','event_details'):
+            assert current['rows'][table]==rows,table+' changed during state repair'
+    for table in ('events','event_details'):
+        assert set(before['rows'][table])<=set(current['rows'][table]),'Prior evidence changed'
+        assert len(current['rows'][table])==len(before['rows'][table])+1,'Unexpected repair evidence'
+    states=[json.loads(row) for row in current['rows']['access_state']]
+    assert len(states)==1
+    expected=json.loads(before['rows']['access_state'][0])
+    expected[3]='manual_action';expected[5]=None;expected[7]=states[0][7]
+    assert states[0]==expected,'Unexpected capability changes'
+    with closing(sqlite3.connect(data/'workbench.sqlite3')) as con:
+        assert con.execute("SELECT count(*) FROM event_details WHERE kind='access_budget_exhausted'").fetchone()[0]==1
+    return current
+
 
 def seed(app, env, data, instance, baseline_version="0.2.0"):
     process, log, info = launch_host_or_desktop(app, env, data, instance)
@@ -310,13 +344,15 @@ def seed(app, env, data, instance, baseline_version="0.2.0"):
     finally:
         stop_host_or_desktop(app, env, instance, process, log, info)
     run_command([app / "runtime/python/python.exe", "-c", SEED, data, app], {**env, "PYTHONPATH": str(app)},cwd=app)
+    if baseline_version=='0.5.3':
+        run_command([app/'runtime/python/python.exe','-c',EXHAUSTED_SEED,data],{**env,'PYTHONPATH':str(app)},cwd=app)
     if baseline_version in ('0.4.3','0.4.4'):
         with closing(sqlite3.connect(data/'workbench.sqlite3')) as con:
             assert con.execute('PRAGMA user_version').fetchone()[0]==4,'Old installer fixture must remain schema 4 before upgrade'
     return snapshot(data)
 
 
-def verify_new(app, env, data, instance, before, version):
+def verify_new(app, env, data, instance, before, version, *, exhausted=False):
     assert app_version(app) == version
     assert (app / "resources/app.asar").is_file()
     assert list((app / "resources/app.asar.unpacked").rglob("*.node"))
@@ -326,10 +362,17 @@ def verify_new(app, env, data, instance, before, version):
     try:
         assert request(info, "GET", "/api/v1/health")["version"] == version
         assert request(info, "GET", "/api/v1/datasets")["items"]
+        if exhausted:
+            job=request(info,'GET','/api/v1/jobs/exhausted-upgrade')
+            assert job['attempt']==0 and job['status_detail']['next_retry_at'] is None
+            assert job['status_detail']['retry']['blocked_reason']=='manual_action'
+            assert job['status_detail']['retry']['threshold']==999
+            cap=request(info,'GET','/api/v1/platforms/dy/availability')['items'][0]
+            assert cap['state']=='manual_action' and cap['checks']==3 and cap['cooldown_until'] is None
         run_command([app / "runtime/python/python.exe", "-c", VERIFY_SNAPSHOT, data], {**env, "PYTHONPATH": str(app)},cwd=app)
     finally:
         stop_host_or_desktop(app, env, instance, process, log, info, desktop=True)
-    preserved(data,before)
+    (preserved_exhausted if exhausted else preserved)(data,before)
 
 
 def native_apply(install, package, env, directory):
@@ -394,7 +437,7 @@ def execute(args):
                     assert app_version(app) == args.baseline_version and snapshot(data) == before
                     checks.append("broken-package-keeps-old-installation-and-data")
                     native_apply(install, args.new_package.resolve(), env, case)
-                verify_new(app, env, data, instance, before, args.version)
+                verify_new(app, env, data, instance, before, args.version,exhausted=args.baseline_version=='0.5.3')
                 checks.append(mode + "-" + args.baseline_version + "-to-" + args.version)
                 if mode == "native-package-update" and args.next_package is not None:
                     migrated=snapshot(data)

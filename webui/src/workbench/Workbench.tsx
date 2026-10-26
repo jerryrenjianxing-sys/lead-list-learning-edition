@@ -65,6 +65,7 @@ const labels: Record<string, string> = {
   needs_login: "需要登录",
   waiting_access: "等待访问恢复",
   waiting_retry: "等待重试",
+  manual_action: "需人工复核",
   waiting_agent: "等待 Agent 分析",
 };
 const name = (id: string) => platforms.find((p) => p[0] === id)?.[1] || id;
@@ -76,6 +77,7 @@ function Status({ value }: { value: string }) {
   );
 }
 function jobStatus(job: Job): string {
+  if (["waiting_retry","waiting_access"].includes(job.state) && job.status_detail?.retry?.blocked_reason === "manual_action") return "manual_action";
   if (job.state === "running" && job.options.crawler_type === "login") return "logging_in";
   if (job.state === "completed" && job.checkpoint?.collection?.empty) return "no_results";
   if (job.state === "completed" && job.options.crawler_type !== "login" && job.status_detail?.range_verified === false) return "unconfirmed";
@@ -991,7 +993,7 @@ export default function Workbench() {
             platforms={statuses}
             pending={pendingLogin}
             clock={clock}
-            probe={(id,capability) => void perform(() => api(`/platforms/${id}/probes`,"POST",{capability}),"探测已受理；可在平台卡片查看操作进度。")}
+            probe={(id,capability,restartCycle) => void perform(() => api(`/platforms/${id}/probes`,"POST",{capability,...(restartCycle ? {restart_cycle:true} : {})}),"检查已受理；可在平台卡片查看操作进度。")}
             cancelOperation={id => void perform(() => api(`/operations/${id}/cancel`,"POST",{}),"探测已取消。")}
             start={(id) => void startLogin(id)}
             action={(id, action) =>

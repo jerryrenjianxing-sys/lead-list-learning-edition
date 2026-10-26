@@ -12,7 +12,23 @@ import re
 from sqlite3 import Connection
 from typing import Literal, Mapping, TypedDict
 
-from .database import digest, dump, now, uid
+from .database import Conflict, digest, dump, now, uid
+
+MAX_AUTOMATIC_CHECKS = 3
+
+
+def requires_manual_review(state: Mapping) -> bool:
+    return state['state'] == 'manual_action' or (
+        state['state'] != 'available' and (state['checks'] or 0) >= MAX_AUTOMATIC_CHECKS
+    )
+
+
+def capability_view(state: Mapping) -> dict:
+    result = dict(state)
+    if requires_manual_review(result):
+        result['retry_not_before'] = result.get('cooldown_until')
+        result.update(state='manual_action', cooldown_until=None)
+    return result
 
 CAPABILITIES = ("search", "detail", "creator", "comments", "replies", "profile")
 NETWORK_REASONS = {"network_error", "request_failed", "timeout"}
@@ -80,10 +96,13 @@ class Availability:
         source_attempt=None,
         automatic=False,
         original_reason="",
+        restart_cycle=False,
     ):
         if capability not in CAPABILITIES:
             raise ValueError("Unknown collection capability")
         session = self._session(con, platform)
+        if restart_cycle and (platform!='dy' or not session['account_id'] or session['check_state']!='authenticated'):
+            raise Conflict('重开复查周期需要抖音当前账号认证有效。')
         environment = digest(
             {k: session[k] for k in ("generation", "account_id", "browser", "profile")}
             | {"platform": platform, "capability": capability}
@@ -122,6 +141,21 @@ class Availability:
             and previous["cooldown_until"] > self.clock()
             else ""
         )
+        if restart_cycle and not reason:
+            if not previous or not requires_manual_review(previous) or previous['checks']<MAX_AUTOMATIC_CHECKS:
+                current = con.execute('SELECT id,state FROM operations WHERE id=?',
+                                      (previous['operation_id'] if previous else None,)).fetchone()
+                if current:
+                    return {**dict(current),'reused':True}
+                raise Conflict('当前复查周期尚未耗尽；请使用普通检查。')
+            con.execute(
+                "UPDATE access_state SET checks=0,state='manual_action',cooldown_until=NULL,updated=?,operation_id=? "
+                "WHERE platform=? AND account_id=? AND capability=?",
+                (stamp,identity,platform,account,capability))
+            original_reason='request_rejected'
+            self._cycle_event(con,platform,account,capability,'access_cycle_restarted',
+                'User explicitly restarted the exhausted access cycle',
+                {'previous_checks':previous['checks'],'operation_id':identity})
         result = {
             "attempted": False,
             "verdict": "unconfirmed",
@@ -181,7 +215,42 @@ class Availability:
                     ),
                 ),
             )
+            self._repair_exhausted(con)
             con.commit()
+
+    def _cycle_event(self, con, platform, account, capability, kind, message, details):
+        from .recovery import event
+        rows = con.execute(
+            "SELECT j.id,j.attempt FROM jobs j JOIN job_retry_plans p ON p.job_id=j.id "
+            "WHERE j.platform=? AND p.account_id=? AND p.enabled=1 "
+            "AND j.state IN ('waiting_access','waiting_retry')", (platform,account)
+        ).fetchall()
+        for job in rows:
+            event(con,job['id'],job['attempt'],message,kind=kind,capability=capability,
+                  source='user' if kind=='access_cycle_restarted' else 'queue',details=details)
+
+    def _repair_exhausted(self, con):
+        rows = con.execute(
+            "SELECT * FROM access_state WHERE platform='dy' AND checks>=? AND state<>'available' "
+            "AND (state<>'manual_action' OR cooldown_until<=?)", (MAX_AUTOMATIC_CHECKS,self.clock())
+        ).fetchall()
+        for row in rows:
+            con.execute(
+                "UPDATE access_state SET state='manual_action',cooldown_until=?,updated=? "
+                "WHERE platform=? AND account_id=? AND capability=?",
+                (row['cooldown_until'] if row['cooldown_until'] and row['cooldown_until']>self.clock() else None,
+                 now(),row['platform'],row['account_id'],row['capability']))
+            self._cycle_event(con,row['platform'],row['account_id'],row['capability'],
+                'access_budget_exhausted','Automatic access checks exhausted; manual review required',
+                {'checks':row['checks'],'previous_state':row['state']})
+        con.execute(
+            "UPDATE operations SET state='failed',updated=?,result=? WHERE kind='probe' AND state='accepted' "
+            "AND id IN (SELECT c.operation_id FROM access_checks c JOIN operations o ON o.id=c.operation_id "
+            "JOIN access_state s ON s.platform=o.platform AND s.capability=o.capability "
+            "AND s.account_id=COALESCE(c.account_id,'') WHERE s.state='manual_action' AND s.checks>=? "
+            "AND (c.automatic=1 OR c.source_job IS NOT NULL))",
+            (now(),dump({'attempted':False,'reason_code':'retry_budget_exhausted',
+                        'next_actions':['inspect_status','restart_cycle']}),MAX_AUTOMATIC_CHECKS))
 
     def claim(self):
         with self.db.lock, self.db.connect() as con:
@@ -359,9 +428,12 @@ class Availability:
                 ),
             )
             if same_session and operation["platform"] == "dy":
-                self._decision(
+                decision = self._decision(
                     con, operation, verdict, reason, result.get("retry_after", 0)
                 )
+                if decision=='manual_action':
+                    clean['next_actions']=['inspect_status','restart_cycle']
+                    con.execute('UPDATE operations SET result=? WHERE id=?',(dump(clean),operation['id']))
             con.commit()
             return True
 
@@ -391,7 +463,14 @@ class Availability:
             and previous
             and previous["state"] in ("restricted", "suspected_restriction")
         )
-        if restricted or suspected or recheck_failed:
+        if verdict == 'available':
+            state, checks = 'available', 0
+        elif checks >= MAX_AUTOMATIC_CHECKS:
+            state = 'manual_action'
+            # A server minimum remains a manual not-before bound, never an automatic retry.
+            if retry_after:
+                deadline=self.clock()+max(0,int(retry_after))
+        elif restricted or suspected or recheck_failed:
             state = (
                 previous["state"]
                 if recheck_failed
@@ -399,15 +478,10 @@ class Availability:
                 if restricted
                 else "suspected_restriction"
             )
-            if operation["automatic"] and checks >= 3:
-                state = "manual_action"
-            else:
-                # The initial anomaly schedules 60 minutes; subsequent failed checks 2h and 4h.
-                deadline = self.clock() + max(
-                    (3600, 7200, 14400)[min(checks, 2)], max(0, int(retry_after))
-                )
-        elif verdict == "available":
-            state, checks = "available", 0
+            # The initial anomaly schedules 60 minutes; subsequent failed checks 2h and 4h.
+            deadline = self.clock() + max(
+                (3600, 7200, 14400)[min(checks, 2)], max(0, int(retry_after))
+            )
         else:
             state = verdict
         con.execute(
@@ -435,6 +509,7 @@ class Availability:
                     (capability, platform, account),
                 )
             self.resume_waiting(con, platform, account, operation["id"])
+        return state
 
     def pause(self, con, job, capability, reason, retry_after=0):
         session = self._session(con, job["platform"])
@@ -467,6 +542,7 @@ class Availability:
     def schedule_due(self):
         with self.db.lock, self.db.connect() as con:
             con.execute("BEGIN IMMEDIATE")
+            self._repair_exhausted(con)
             due = con.execute(
                 "SELECT * FROM access_state WHERE platform='dy' AND cooldown_until IS NOT NULL AND cooldown_until<=? AND checks<3 AND state IN ('restricted','suspected_restriction')",
                 (self.clock(),),
@@ -550,6 +626,6 @@ class Availability:
                 (platform, session["account_id"] or ""),
             ).fetchall()
         return {
-            "items": [dict(r) for r in rows],
+            "items": [capability_view(r) for r in rows],
             "automatic_checks_enabled": platform == "dy",
         }

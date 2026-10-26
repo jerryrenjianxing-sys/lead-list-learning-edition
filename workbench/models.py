@@ -12,6 +12,7 @@ class SelfTestRequest(BaseModel):
 class ProbeRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     capability: Literal['search','detail','creator','comments','replies','profile']
+    restart_cycle: bool = False
 
 
 class RetryPlanRequest(BaseModel):

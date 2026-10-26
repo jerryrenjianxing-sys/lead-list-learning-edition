@@ -507,6 +507,7 @@ def main():
     probe.add_argument('capability',choices=('search','detail','creator','comments','replies','profile'))
     probe.add_argument('--no-wait',action='store_true')
     probe.add_argument('--request-id')
+    probe.add_argument('--restart-cycle',action='store_true',help='显式重开已耗尽的复查周期；登录和普通检查不重置次数')
     self_test = commands.add_parser("self-test", help="独立运行自检，不创建正式业务成果")
     self_test.add_argument("--local-only", action="store_true")
     actions = self_test.add_mutually_exclusive_group()
@@ -547,7 +548,7 @@ def main():
                 result=client.request('POST',path+'/cancel',b'{}',request_id=args.request_id) if args.cancel else json.loads(client.send('GET',path))
             else:
                 result=client.request('POST','/api/v1/platforms/'+args.platform+'/probes',
-                                      json.dumps({'capability':args.capability}).encode(),request_id=args.request_id)
+                                      json.dumps({'capability':args.capability,**({'restart_cycle':True} if args.restart_cycle else {})}).encode(),request_id=args.request_id)
                 deadline=time.monotonic()+65
                 while not args.no_wait and result['state'] in ('accepted','running') and time.monotonic()<deadline:
                     time.sleep(.5)
