@@ -10,21 +10,32 @@ import json
 import time
 import re
 from sqlite3 import Connection
-from typing import Literal, Mapping, TypedDict
+from typing import Any, Literal, Mapping, TypedDict, cast
 
 from .database import Conflict, digest, dump, now, uid
 
 MAX_AUTOMATIC_CHECKS = 3
 
 
-def requires_manual_review(state: Mapping) -> bool:
+class CapabilityView(TypedDict, total=False):
+    capability: str
+    state: str | None
+    reason: str | None
+    cooldown_until: float | None
+    checks: int | None
+    updated: str | None
+    operation_id: str | None
+    retry_not_before: float | None
+
+
+def requires_manual_review(state: Mapping[str, Any]) -> bool:
     return state['state'] == 'manual_action' or (
         state['state'] != 'available' and (state['checks'] or 0) >= MAX_AUTOMATIC_CHECKS
     )
 
 
-def capability_view(state: Mapping) -> dict:
-    result = dict(state)
+def capability_view(state: Mapping[str, Any]) -> CapabilityView:
+    result = cast(CapabilityView, dict(state))
     if requires_manual_review(result):
         result['retry_not_before'] = result.get('cooldown_until')
         result.update(state='manual_action', cooldown_until=None)
@@ -96,7 +107,7 @@ class Availability:
         source_attempt=None,
         automatic=False,
         original_reason="",
-        restart_cycle=False,
+        restart_cycle: bool = False,
     ):
         if capability not in CAPABILITIES:
             raise ValueError("Unknown collection capability")
@@ -218,7 +229,8 @@ class Availability:
             self._repair_exhausted(con)
             con.commit()
 
-    def _cycle_event(self, con, platform, account, capability, kind, message, details):
+    def _cycle_event(self, con: Connection, platform: str, account: str, capability: str,
+                     kind: str, message: str, details: dict[str, object]) -> None:
         from .recovery import event
         rows = con.execute(
             "SELECT j.id,j.attempt FROM jobs j JOIN job_retry_plans p ON p.job_id=j.id "
@@ -229,7 +241,7 @@ class Availability:
             event(con,job['id'],job['attempt'],message,kind=kind,capability=capability,
                   source='user' if kind=='access_cycle_restarted' else 'queue',details=details)
 
-    def _repair_exhausted(self, con):
+    def _repair_exhausted(self, con: Connection) -> None:
         rows = con.execute(
             "SELECT * FROM access_state WHERE platform='dy' AND checks>=? AND state<>'available' "
             "AND (state<>'manual_action' OR cooldown_until<=?)", (MAX_AUTOMATIC_CHECKS,self.clock())
