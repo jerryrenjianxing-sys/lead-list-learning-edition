@@ -15,7 +15,7 @@ fs.mkdirSync(root, { recursive: true });
 const env = { ...process.env, MEDIAWORKBENCH_DATA_DIR: path.join(root, 'data'), MEDIAWORKBENCH_INSTANCE: discovery, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' };
 delete env.ELECTRON_RUN_AS_NODE;
 let desktop, hostPid;
-const result = { ok: false, faultObserved: false, recovered: false, healthyRoutePreserved: false, cleanup_complete: false };
+const result = { ok: false, faultObserved: false, recovered: false, healthyRoutePreserved: false, manualRecoveryPreserved: false, cleanup_complete: false };
 function alive(pid) { try { process.kill(pid, 0); return true; } catch (error) { return error.code !== 'ESRCH'; } }
 (async () => {
   try {
@@ -45,6 +45,22 @@ function alive(pid) { try { process.kill(pid, 0); return true; } catch (error) {
     await page.waitForTimeout(16000);
     assert.equal(page.url(), healthyUrl, 'Healthy polling reset the current view');
     result.healthyRoutePreserved = true;
+    // A user can reopen settings from the tray while the status page is visible.
+    // That successful navigation must not leave stale error-page state behind.
+    await desktop.evaluate(() => {
+      globalThis.__reconnectOriginalFetch = globalThis.fetch;
+      globalThis.fetch = async (input, init) => {
+        const route = new URL(typeof input === 'string' ? input : input.url || String(input)).pathname;
+        if (route === '/api/v1/agent/handshake' || route === '/api/v1/diagnostics') return new Response('{}', { status: 503 });
+        return globalThis.__reconnectOriginalFetch(input, init);
+      };
+    });
+    await page.waitForURL(/^data:/, { timeout: 22000 });
+    await desktop.evaluate(() => { globalThis.fetch = globalThis.__reconnectOriginalFetch; delete globalThis.__reconnectOriginalFetch; });
+    await page.goto(healthyUrl);
+    await page.waitForTimeout(16000);
+    assert.equal(page.url(), healthyUrl, 'Readiness recovery overwrote the manually reopened view');
+    result.manualRecoveryPreserved = true;
     result.ok = true;
     fs.mkdirSync(path.dirname(output), { recursive: true });
     await page.screenshot({ path: output.replace(/\.json$/, '.png') });

@@ -53,7 +53,7 @@ export class HostController {
   start(): Promise<Instance> {
     if (this.stopping) return Promise.reject(new Error('后台正在停止，请稍候重试。'));
     if (this.starting) return this.starting;
-    const pending = this.startCurrent(this.revision).finally(() => {
+    const pending = this.startCurrent(++this.revision).finally(() => {
       if (this.starting === pending) this.starting = undefined;
     });
     this.starting = pending;

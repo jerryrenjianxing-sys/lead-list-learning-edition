@@ -4,13 +4,15 @@ const http=require('node:http');
 const fs=require('node:fs/promises');
 const os=require('node:os');
 const path=require('node:path');
-const crypto=require('node:crypto');
 const {HostController}=require('../dist/host');
+const {workspaceIdentity}=require('../dist/policy');
 const {EventEmitter}=require('node:events');
-async function hostFixture({version='0.3.0',dataMismatch=false,handshakeMismatch=false,unauthorizedHandshake=false,slowDiagnostics=false}={}) {
- const data=await fs.mkdtemp(path.join(os.tmpdir(),'mdr-host-'));const canonical=await fs.realpath(data);const workspace=crypto.createHash('sha256').update(process.platform==='win32'?canonical.toLowerCase():canonical).digest('hex');const requests=[];
- const server=http.createServer((req,res)=>{assert.equal(req.headers.authorization,'Bearer isolated-test');requests.push(req.url);res.setHeader('Content-Type','application/json');
+async function hostFixture({version='0.3.0',dataMismatch=false,handshakeMismatch=false,unauthorizedHandshake=false,slowDiagnostics=false,beforeHandshake}={}) {
+ // The packaged reconnect test checks the actual Python identity contract.
+ const data=await fs.mkdtemp(path.join(os.tmpdir(),'mdr-host-'));const workspace=workspaceIdentity(data);const requests=[];
+ const server=http.createServer(async(req,res)=>{assert.equal(req.headers.authorization,'Bearer isolated-test');requests.push(req.url);res.setHeader('Content-Type','application/json');
   if(req.url==='/api/v1/agent/handshake'){
+   if(beforeHandshake)await beforeHandshake();
    if(unauthorizedHandshake){res.writeHead(401);res.end('{}');return;}
    res.end(JSON.stringify({product:'MediaWorkbench',version,api_version:1,status:'ok',workspace_id:handshakeMismatch?'0'.repeat(64):workspace,instance_id:'fixture-instance'}));return;
   }
@@ -50,6 +52,16 @@ test('concurrent reconnects share one authorized identity check',async()=>{
   const instances=await Promise.all(Array.from({length:6},()=>f.controller.start()));assert(instances.every(x=>x===instances[0]));
   assert.equal(f.requests.filter(x=>x==='/api/v1/agent/handshake').length,1);assert.equal(f.controller.child,undefined);
  }finally{await f.clean();}
+});
+test('late periodic discovery cannot replace the instance from a newer reconnect',async()=>{
+ let entered,release;const requested=new Promise(r=>entered=r);const response=new Promise(r=>release=r);let calls=0;
+ const f=await hostFixture({beforeHandshake:async()=>{if(++calls===1){entered();await response;}}});
+ try{
+  const periodic=f.controller.discover();await requested;
+  const discovery=JSON.parse(await fs.readFile(f.instancePath,'utf8'));await fs.writeFile(f.instancePath,JSON.stringify({...discovery,pid:process.pid+1}));
+  const connected=await f.controller.start();assert.equal(connected.pid,process.pid+1);
+  release();await periodic;assert.equal(f.controller.instance,connected,'Late polling replaced the newer reconnect');
+ }finally{release();await f.clean();}
 });
 test('retry retains an existing starting child instead of spawning another host',async()=>{
  const data=await fs.mkdtemp(path.join(os.tmpdir(),'mdr-child-'));const controller=new HostController({root:data,python:process.execPath,data,instance:path.join(data,'missing'),version:'0.3.0'},{startupMs:1});
