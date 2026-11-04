@@ -1,6 +1,14 @@
 import json
+import sqlite3
 import jsonschema
 from .database import Conflict, Missing, dump, digest, uid, now, record_view
+
+
+def _coverage(counts: dict[str, int]) -> dict[str, int]:
+    return {
+        "total": sum(counts.values()),
+        **{k: counts.get(k, 0) for k in ("pending", "processed", "skipped", "failed")},
+    }
 
 
 def coverage(con, analysis_id):
@@ -11,10 +19,21 @@ def coverage(con, analysis_id):
             (analysis_id,),
         )
     }
-    return {
-        "total": sum(counts.values()),
-        **{k: counts.get(k, 0) for k in ("pending", "processed", "skipped", "failed")},
-    }
+    return _coverage(counts)
+
+
+def coverages(con: sqlite3.Connection, analysis_ids: list[str]) -> dict[str, dict[str, int]]:
+    counts: dict[str, dict[str, int]] = {identity: {} for identity in analysis_ids}
+    if counts:
+        # Input snapshots are large; the primary-key index causes random table
+        # lookups for state. Read the table sequentially for this full-list view.
+        for row in con.execute(
+            "SELECT analysis_id,state,COUNT(*) n FROM analysis_inputs NOT INDEXED "
+            "GROUP BY analysis_id,state"
+        ):
+            if row["analysis_id"] in counts:
+                counts[row["analysis_id"]][row["state"]] = row["n"]
+    return {identity: _coverage(states) for identity, states in counts.items()}
 
 
 def create(con, body):
