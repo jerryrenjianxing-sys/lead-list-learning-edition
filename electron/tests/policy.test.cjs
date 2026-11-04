@@ -25,4 +25,5 @@ test('automatic update check budget is24hours and manual invalid stamp isdue', (
 test('discovery requires valid local identity and version/data compatibility', () => {
   const i={product:'MediaWorkbench',version:'0.3.0',api_version:1,base_url:'http://127.0.0.1:48139',token:'test-private',pid:1,data_directory:'C:\\data'};
   assert.equal(p.validateDiscovery(i),i); assert.equal(p.compatibleInstance(i,'0.3.0','C:\\DATA'),true); assert.equal(p.compatibleInstance(i,'0.2.0','C:\\data'),false); assert.throws(()=>p.validateDiscovery({...i,base_url:'http://example.com'}));
+  for (const fields of [{workspace_id:'not-a-workspace'},{instance_id:42},{instance_id:''}]) assert.throws(()=>p.validateDiscovery({...i,...fields}));
 });

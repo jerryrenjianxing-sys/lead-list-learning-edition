@@ -63,6 +63,10 @@ class WorkspaceReadModel:
         row = self.db.one("analyses", identity)
         with self.db.connect() as connection:
             coverage = analysis.coverage(connection, identity)
+        return self._analysis_view(row, coverage)
+
+    @staticmethod
+    def _analysis_view(row, coverage):
         schema = row.pop("schema_json")
         return {
             **row, "result_schema": json.loads(schema) if schema is not None else None,
@@ -70,7 +74,11 @@ class WorkspaceReadModel:
         }
 
     def analyses(self):
-        return {"items": [self.analysis(row["id"]) for row in self.db.query("SELECT id FROM analyses ORDER BY created DESC")]}
+        with self.db.connect() as connection:
+            connection.execute("BEGIN")
+            rows = [dict(row) for row in connection.execute("SELECT * FROM analyses ORDER BY created DESC")]
+            coverage = analysis.coverages(connection, [row["id"] for row in rows])
+        return {"items": [self._analysis_view(row, coverage[row["id"]]) for row in rows]}
 
     def artifacts(self):
         return {"items": [

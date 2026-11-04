@@ -29,6 +29,7 @@ let window: BrowserWindow | undefined;
 let tray: Tray | undefined;
 let exiting = false, closing = false, starting = false, checkingHost = false, updatingHost = false;
 let healthTimer: NodeJS.Timeout | undefined;
+let connectionRevision = 0;
 let updater: DesktopUpdater;
 const restore = () => { if (!window) return; window.show(); if (window.isMinimized()) window.restore(); window.focus(); };
 const escape = (value: string) => value.replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]!));
@@ -40,10 +41,14 @@ async function status(text: string): Promise<void> {
 async function startHost(): Promise<void> {
   if (starting || exiting || closing || updatingHost) return;
   starting = true;
+  const revision = ++connectionRevision;
   try {
     const instance = await host.start();
+    if (revision !== connectionRevision || exiting || closing || updatingHost) return;
     await window?.loadURL(`${instance.base_url}/`);
-  } catch (error) { await status(`启动未完成\n\n${(error as Error).message}\n\n可从托盘打开日志目录，或点击“重新连接后台”。`); }
+  } catch (error) {
+    if (revision === connectionRevision && !exiting && !closing && !updatingHost) await status(`启动未完成\n\n${(error as Error).message}\n\n可从托盘打开日志目录，或点击“重新连接后台”。`);
+  }
   finally { starting = false; }
 }
 async function exitApp(): Promise<void> {
@@ -123,7 +128,15 @@ async function launch(): Promise<void> {
   healthTimer = setInterval(() => {
     if (exiting || closing || starting || checkingHost || updatingHost) return;
     checkingHost = true;
-    void host.discover().then(instance => { if (!instance && !exiting && !closing && !updatingHost) { host.instance = undefined; return startHost(); } }).catch(error => status(`后台连接未完成\n\n${error.message}\n\n可从托盘重新连接后台。`)).finally(() => { checkingHost = false; });
+    const revision = connectionRevision;
+    void host.discover().then(instance => {
+      if (revision !== connectionRevision || exiting || closing || updatingHost) return;
+      if (!instance) { host.instance = undefined; return startHost(); }
+      const displayed = window && !window.isDestroyed() ? window.webContents.getURL() : '';
+      if (!trustedSource(displayed, instance.base_url)) return startHost();
+    }).catch(error => {
+      if (revision === connectionRevision && !exiting && !closing && !updatingHost) return status(`后台连接未完成\n\n${error.message}\n\n可从托盘重新连接后台。`);
+    }).finally(() => { checkingHost = false; });
   }, 15000);
 }
 app.on('before-quit', event => { if (!exiting) { event.preventDefault(); void exitApp(); } });
