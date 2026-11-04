@@ -133,3 +133,54 @@ def test_release_by_id_rejects_mismatched_tag(publisher, monkeypatch):
     monkeypatch.setattr(publisher, "gh", lambda *args, **kwargs: SimpleNamespace(stdout=json.dumps({"id": 42, "tag_name": "v0.2.0", "draft": True})))
     with pytest.raises(RuntimeError, match="identity changed"):
         publisher.release_by_id(42, "v0.3.0")
+
+
+@pytest.fixture
+def reconnect_release_checks():
+    version = '0.5.6'
+    paths = [{'ok': True, 'version': version, 'baseline_version': baseline,
+              'next_version': '0.5.7', 'cleanup_complete': True,
+              'checks': ['full-installer', 'native-package-update'], 'limitations': []}
+             for baseline in ('0.4.3', '0.4.4', '0.5.4')]
+    paths[2]['checks'] = ['full-installer-0.5.4-to-0.5.6', 'native-package-update-0.5.4-to-0.5.6']
+    return [version, {'version': version, 'packaged_manifest_dirty': False, 'desktop': {'kind': 'electron'}},
+            {'local_state': 'passed', 'cleanup_complete': True},
+            {'ok': True, 'version': version, 'cleanup_complete': True},
+            {'ok': True, 'version': version},
+            {**paths[0], 'baseline_versions': ['0.4.3', '0.4.4', '0.5.4'],
+             'rollback_verified': True, 'upgrade_paths': paths},
+            {'ok': True, 'version': version, 'next_version': '0.5.7',
+             'cleanup_complete': True, 'implementation_override': False}]
+
+
+def test_publisher_rejects_reconnect_release_without_054_evidence(publisher, reconnect_release_checks):
+    checks = reconnect_release_checks
+    upgrade = checks[5]
+    checks[5] = {**upgrade, 'baseline_versions': ['0.4.3', '0.4.4'],
+                 'upgrade_paths': upgrade['upgrade_paths'][:2]}
+    with pytest.raises(RuntimeError, match='0.5.4'):
+        publisher.verify_release_checks(*checks)
+
+
+def test_publisher_validates_each_required_upgrade_path(publisher, reconnect_release_checks):
+    checks = reconnect_release_checks
+    publisher.verify_release_checks(*checks)
+    upgrade = checks[5]
+    checks[5] = {**upgrade, 'upgrade_paths': upgrade['upgrade_paths'][:2]}
+    with pytest.raises(RuntimeError, match='upgrade'):
+        publisher.verify_release_checks(*checks)
+    invalid = {**upgrade['upgrade_paths'][2], 'cleanup_complete': False}
+    checks[5] = {**upgrade, 'upgrade_paths': [*upgrade['upgrade_paths'][:2], invalid]}
+    with pytest.raises(RuntimeError, match='cleanup'):
+        publisher.verify_release_checks(*checks)
+
+
+def test_reconnect_package_requires_real_recovery_and_cleanup(publisher):
+    proof = {'ok': True, 'version': '0.5.6', 'faultObserved': True, 'recovered': True,
+             'healthyRoutePreserved': True, 'manualRecoveryPreserved': True, 'cleanup_complete': True}
+    publisher.verify_reconnect_check(proof, '0.5.6')
+    for key in ('ok', 'faultObserved', 'recovered', 'healthyRoutePreserved', 'manualRecoveryPreserved', 'cleanup_complete'):
+        with pytest.raises(RuntimeError, match='reconnect'):
+            publisher.verify_reconnect_check({**proof, key: False}, '0.5.6')
+    with pytest.raises(RuntimeError, match='reconnect'):
+        publisher.verify_reconnect_check({**proof, 'version': '0.5.4'}, '0.5.6')

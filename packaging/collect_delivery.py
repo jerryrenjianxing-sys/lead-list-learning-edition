@@ -32,6 +32,13 @@ def upgrade_baseline(version):
     return "0.3.1" if parts >= (0, 4, 0) else "0.2.0"
 
 
+def required_upgrade_baselines(version: str) -> list[str]:
+    baselines = ['0.4.3', '0.4.4']
+    if tuple(map(int, version.split('.'))) >= (0, 5, 6):
+        baselines.append('0.5.4')
+    return baselines
+
+
 def full_package(release, version):
     feed = json.loads((release / "releases.win-preview.json").read_text(encoding="utf-8"))
     candidates = [a for a in feed["Assets"] if a["PackageId"] == "MediaWorkbench.Desktop" and a["Version"] == version and a["Type"] == "Full"]
@@ -64,6 +71,10 @@ def public_upgrade_summary(result, version, baseline=None):
     expected_baseline = baseline or upgrade_baseline(version)
     if result.get("ok") is not True or result.get("version") != version or result.get("baseline_version") != expected_baseline or result.get("next_version") != expected_next or result.get("cleanup_complete") is not True:
         raise RuntimeError("Upgrade checks did not verify the current and private next version with cleanup")
+    if tuple(map(int, version.split('.'))) >= (0, 5, 6) and expected_baseline == '0.5.4':
+        required = {f'full-installer-0.5.4-to-{version}', f'native-package-update-0.5.4-to-{version}'}
+        if not required <= set(result.get('checks', [])):
+            raise RuntimeError('The 0.5.4 upgrade must verify both installer paths')
     # Directory, install paths, fixture files, process details and raw errors
     # remain in the local cache; public evidence includes only test outcomes.
     return {key: result[key] for key in ("ok", "version", "baseline_version", "next_version", "cleanup_complete", "checks", "limitations")}
@@ -78,10 +89,10 @@ def public_recovery_upgrade_summary(result: Mapping[str, Any], version: str) -> 
 
 
 def public_upgrade_matrix(primary,additional,version):
-    required=['0.4.3','0.4.4']
+    required=required_upgrade_baselines(version)
     proofs={proof.get('baseline_version'):proof for proof in [primary,*additional]}
-    if set(proofs)!=set(required) or primary.get('baseline_version')!='0.4.3' or primary.get('rollback_verified') is not True:
-        raise RuntimeError('Upgrade checks require 0.4.3, 0.4.4 and the rehearsed 0.4.3 rollback')
+    if len(proofs)!=1+len(additional) or set(proofs)!=set(required) or primary.get('baseline_version')!='0.4.3' or primary.get('rollback_verified') is not True:
+        raise RuntimeError('Upgrade checks require '+', '.join(required)+' and the rehearsed 0.4.3 rollback')
     public=[public_upgrade_summary(proofs[baseline],version,baseline) for baseline in required]
     return {**public[0],'baseline_versions':required,'upgrade_paths':public,'rollback_verified':True}
 

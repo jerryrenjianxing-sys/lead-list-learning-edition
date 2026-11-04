@@ -15,11 +15,12 @@ fs.mkdirSync(root, { recursive: true });
 const env = { ...process.env, MEDIAWORKBENCH_DATA_DIR: path.join(root, 'data'), MEDIAWORKBENCH_INSTANCE: discovery, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' };
 delete env.ELECTRON_RUN_AS_NODE;
 let desktop, hostPid;
-const result = { ok: false, faultObserved: false, recovered: false, healthyRoutePreserved: false, manualRecoveryPreserved: false, cleanup_complete: false };
+const result = { ok: false, version: null, faultObserved: false, recovered: false, healthyRoutePreserved: false, manualRecoveryPreserved: false, cleanup_complete: false };
 function alive(pid) { try { process.kill(pid, 0); return true; } catch (error) { return error.code !== 'ESRCH'; } }
 (async () => {
   try {
     desktop = await _electron.launch({ executablePath: path.join(directory, 'MediaWorkbench.exe'), cwd: directory, env, timeout: 60000 });
+    result.version = await desktop.evaluate(({ app }) => app.getVersion());
     const page = await desktop.firstWindow();
     await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach(window => window.hide()));
     await page.waitForURL(/^http:\/\/127\.0\.0\.1:\d+\//, { timeout: 60000 });

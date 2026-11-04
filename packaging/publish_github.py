@@ -6,7 +6,8 @@ from pathlib import Path
 import subprocess
 import time
 import tomllib
-from collect_delivery import full_package, upgrade_baseline, public_recovery_upgrade_summary
+from typing import Mapping
+from collect_delivery import full_package, upgrade_baseline, public_recovery_upgrade_summary, required_upgrade_baselines, public_upgrade_summary
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = "jerryrenjianxing-sys/lead-list-learning-edition"
@@ -77,10 +78,24 @@ def verify_release_checks(version, integrity, check, desktop_check, lifecycle_ch
     prefix, patch = version.rsplit(".", 1)
     next_version = prefix + "." + str(int(patch) + 1)
     if tuple(map(int,version.split('.'))) >= (0,5,0):
-        if upgrade_check.get('baseline_versions')!=['0.4.3','0.4.4'] or upgrade_check.get('rollback_verified') is not True:
-            raise RuntimeError('State/recovery release requires both upgrade paths and the 0.4.3 rollback rehearsal')
+        required = required_upgrade_baselines(version)
+        if upgrade_check.get('baseline_versions')!=required or upgrade_check.get('rollback_verified') is not True:
+            raise RuntimeError('State/recovery release requires upgrades from '+', '.join(required)+' and the 0.4.3 rollback rehearsal')
+        if tuple(map(int, version.split('.'))) >= (0, 5, 6):
+            paths = upgrade_check.get('upgrade_paths')
+            if not isinstance(paths, list) or len(paths) != len(required) or any(not isinstance(proof, dict) for proof in paths):
+                raise RuntimeError('Missing required upgrade path evidence')
+            for baseline, proof in zip(required, paths):
+                public_upgrade_summary(proof, version, baseline)
     if integrity.get("version") != version or integrity["packaged_manifest_dirty"] or check["local_state"] != "passed" or not check["cleanup_complete"] or desktop_check.get("ok") is not True or desktop_check.get("version") != version or desktop_check.get("cleanup_complete") is not True or lifecycle_check.get("ok") is not True or lifecycle_check.get("version") != version or integrity.get("desktop", {}).get("kind") != "electron" or upgrade_check.get("ok") is not True or upgrade_check.get("version") != version or upgrade_check.get("baseline_version") != upgrade_baseline(version) or upgrade_check.get("next_version") != next_version or upgrade_check.get("cleanup_complete") is not True or native_update_check.get("ok") is not True or native_update_check.get("version") != version or native_update_check.get("next_version") != next_version or native_update_check.get("cleanup_complete") is not True or native_update_check.get("implementation_override") is not False:
         raise RuntimeError("Release did not pass deterministic validation")
+
+
+def verify_reconnect_check(result: Mapping[str, object], version: str) -> None:
+    required = ('ok', 'faultObserved', 'recovered', 'healthyRoutePreserved',
+                'manualRecoveryPreserved', 'cleanup_complete')
+    if result.get('version') != version or any(result.get(key) is not True for key in required):
+        raise RuntimeError('Packaged reconnect recovery and cleanup did not pass')
 
 
 def main():
@@ -100,6 +115,8 @@ def main():
     directory = ROOT / "release" / version
     if tuple(map(int,version.split('.'))) >= (0,5,4):
         public_recovery_upgrade_summary(json.loads((directory/'ELECTRON_053_UPGRADE_RESULT.json').read_text(encoding='utf-8')),version)
+    if tuple(map(int,version.split('.'))) >= (0,5,6):
+        verify_reconnect_check(json.loads((directory/'ELECTRON_RECONNECT_RESULT.json').read_text(encoding='utf-8')),version)
     integrity = json.loads((directory / "build-integrity.json").read_text())
     check = json.loads((directory / "SELF_TEST_RESULT.json").read_text(encoding="utf-8"))
     desktop_check = json.loads((directory / "ELECTRON_TEST_RESULT.json").read_text(encoding="utf-8"))
@@ -117,6 +134,7 @@ def main():
     names = {p.name for p in files}
     required = {"releases.win-preview.json", full_package(directory, version).name, "MediaWorkbench-Skill.zip", "SHA256SUMS.txt", "LICENSE", "THIRD_PARTY_NOTICES.md", "ELECTRON_TEST_RESULT.json", "ELECTRON_LIFECYCLE_RESULT.json", "ELECTRON_UPGRADE_RESULT.json", "ELECTRON_NATIVE_UPDATE_RESULT.json", "SKILL_FILE_RESULT.json"}
     if tuple(map(int,version.split('.'))) >= (0,5,0):required.add('ROLLBACK_0.4.3.md')
+    if tuple(map(int,version.split('.'))) >= (0,5,6):required.add('ELECTRON_RECONNECT_RESULT.json')
     if not required <= names or not any(n.endswith("Setup.exe") for n in names):
         raise ValueError("Missing release assets")
     hashes = {}
