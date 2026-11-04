@@ -21,9 +21,16 @@ export function samePath(a: string, b: string): boolean {
   const normalize = (value: string) => path.resolve(value).replace(/[\\/]+$/, '').toLowerCase();
   return normalize(a) === normalize(b);
 }
+export function workspaceIdentity(directory: string): string {
+  const canonical = fs.realpathSync.native(directory);
+  const normalized = process.platform === 'win32' ? canonical.toLowerCase() : canonical;
+  return crypto.createHash('sha256').update(normalized, 'utf8').digest('hex');
+}
 export function validateDiscovery(value: unknown): Instance {
   const i = value as Instance;
-  if (!i || i.product !== PRODUCT || !localOrigin(i.base_url) || new URL(i.base_url).pathname !== '/' || !i.token || typeof i.token !== 'string' || typeof i.version !== 'string' || !Number.isInteger(i.pid) || i.pid <= 0 || typeof i.data_directory !== 'string' || i.api_version !== 1) throw new Error('无效的本机后台发现文件。');
+  if (!i || i.product !== PRODUCT || !localOrigin(i.base_url) || new URL(i.base_url).pathname !== '/' || !i.token || typeof i.token !== 'string' || typeof i.version !== 'string' || !Number.isInteger(i.pid) || i.pid <= 0 || typeof i.data_directory !== 'string' || i.api_version !== 1
+      || (i.instance_id !== undefined && (typeof i.instance_id !== 'string' || !i.instance_id))
+      || (i.workspace_id !== undefined && (typeof i.workspace_id !== 'string' || !/^[a-f0-9]{64}$/.test(i.workspace_id)))) throw new Error('无效的本机后台发现文件。');
   return i;
 }
 export function compatibleInstance(i: Instance, version: string, data: string): boolean { return i.version === version && samePath(i.data_directory, data); }

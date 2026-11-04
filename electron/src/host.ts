@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, ChildProcess } from 'node:child_process';
-import { compatibleInstance, samePath, validateDiscovery } from './policy';
+import { compatibleInstance, samePath, validateDiscovery, workspaceIdentity } from './policy';
 import { Instance, Paths, PRODUCT } from './types';
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -37,10 +37,15 @@ export class HostController {
     if (!response.ok) throw new Error('现有后台正在运行，但无法确认其身份。请先退出旧版软件。');
     const health = await response.json() as { product?: string; version?: string; data_directory?: string };
     if (health.product !== PRODUCT || health.version !== value.version || !compatibleInstance(value, this.paths.version, this.paths.data) || (health.data_directory && !samePath(health.data_directory, this.paths.data))) throw new Error('旧版或其他数据目录的后台仍在运行。请先正常退出旧版软件后重试。');
-    const diagnostics = await hostRequest(value, '/api/v1/diagnostics');
-    if (!diagnostics.ok) throw new Error('无法确认现有后台的数据目录。');
-    const identity = await diagnostics.json() as { product?: string; version?: string; data_directory?: string };
-    if (identity.product !== PRODUCT || identity.version !== value.version || !identity.data_directory || !samePath(identity.data_directory, this.paths.data)) throw new Error('现有后台的数据目录不匹配，请先退出旧版软件。');
+    // Readiness proves authorization and workspace identity without scanning the database.
+    const handshake = await hostRequest(value, '/api/v1/agent/handshake');
+    if (!handshake.ok) throw new Error('无法确认现有后台的身份和授权。');
+    const identity = await handshake.json() as { product?: string; version?: string; api_version?: number; status?: string; workspace_id?: string; instance_id?: string };
+    const workspace = workspaceIdentity(this.paths.data);
+    if (identity.product !== PRODUCT || identity.version !== value.version || identity.api_version !== 1 || identity.status !== 'ok'
+        || identity.workspace_id !== workspace || (value.workspace_id !== undefined && value.workspace_id !== workspace)
+        || typeof identity.instance_id !== 'string' || !identity.instance_id
+        || (value.instance_id !== undefined && identity.instance_id !== value.instance_id)) throw new Error('现有后台的数据目录或实例身份不匹配，请先退出旧版软件。');
     if (revision !== this.revision) return;
     this.instance = value;
     return value;

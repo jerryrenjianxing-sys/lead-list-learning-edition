@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { EventEmitter } = require('node:events');
+const crypto = require('node:crypto');
 
 function recoveryFixture(oldResponse) {
   const data = path.resolve('isolated-host-recovery');
@@ -17,6 +18,7 @@ function recoveryFixture(oldResponse) {
   const discovery = pid => ({ product: 'MediaWorkbench', version: '0.5.0', api_version: 1,
     base_url: 'http://127.0.0.1:49100/', token: 'synthetic-only', pid, data_directory: data });
   const disk = {
+    realpathSync: { native: value => path.resolve(value) },
     promises: { readFile: async () => JSON.stringify(discovery(spawned ? next.pid : old.pid)), mkdir: async () => {} },
     existsSync: () => true,
     createWriteStream: () => Object.assign(new EventEmitter(), { end() {}, write() {} }),
@@ -26,7 +28,10 @@ function recoveryFixture(oldResponse) {
       if (!oldResponse) throw new Error('Old HTTP listener is closed');
       await oldResponse();
     }
-    return new Response(JSON.stringify({ product: 'MediaWorkbench', version: '0.5.0', data_directory: data }));
+    const canonical = process.platform === 'win32' ? data.toLowerCase() : data;
+    return new Response(JSON.stringify({ product: 'MediaWorkbench', version: '0.5.0', data_directory: data,
+      api_version: 1, status: 'ok', instance_id: 'synthetic-instance',
+      workspace_id: crypto.createHash('sha256').update(canonical).digest('hex') }));
   };
   const modules = new Map();
   function load(name) {

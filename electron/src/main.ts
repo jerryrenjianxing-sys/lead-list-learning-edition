@@ -29,21 +29,28 @@ let window: BrowserWindow | undefined;
 let tray: Tray | undefined;
 let exiting = false, closing = false, starting = false, checkingHost = false, updatingHost = false;
 let healthTimer: NodeJS.Timeout | undefined;
+let showingStatus = false, connectionRevision = 0;
 let updater: DesktopUpdater;
 const restore = () => { if (!window) return; window.show(); if (window.isMinimized()) window.restore(); window.focus(); };
 const escape = (value: string) => value.replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]!));
 async function status(text: string): Promise<void> {
   if (!window || window.isDestroyed()) return;
+  showingStatus = true;
   const html = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>${DISPLAY_NAME}</title><style>body{font:16px system-ui;background:#f7f7f4;color:#19312a;display:grid;place-content:center;min-height:90vh;padding:30px;white-space:pre-wrap;text-align:center;line-height:1.8}</style><body>${escape(text)}</body></html>`;
   await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
 }
 async function startHost(): Promise<void> {
   if (starting || exiting || closing || updatingHost) return;
   starting = true;
+  const revision = ++connectionRevision;
   try {
     const instance = await host.start();
+    if (revision !== connectionRevision || exiting || closing || updatingHost) return;
     await window?.loadURL(`${instance.base_url}/`);
-  } catch (error) { await status(`启动未完成\n\n${(error as Error).message}\n\n可从托盘打开日志目录，或点击“重新连接后台”。`); }
+    showingStatus = false;
+  } catch (error) {
+    if (revision === connectionRevision && !exiting && !closing && !updatingHost) await status(`启动未完成\n\n${(error as Error).message}\n\n可从托盘打开日志目录，或点击“重新连接后台”。`);
+  }
   finally { starting = false; }
 }
 async function exitApp(): Promise<void> {
@@ -123,7 +130,14 @@ async function launch(): Promise<void> {
   healthTimer = setInterval(() => {
     if (exiting || closing || starting || checkingHost || updatingHost) return;
     checkingHost = true;
-    void host.discover().then(instance => { if (!instance && !exiting && !closing && !updatingHost) { host.instance = undefined; return startHost(); } }).catch(error => status(`后台连接未完成\n\n${error.message}\n\n可从托盘重新连接后台。`)).finally(() => { checkingHost = false; });
+    const revision = connectionRevision;
+    void host.discover().then(instance => {
+      if (revision !== connectionRevision || exiting || closing || updatingHost) return;
+      if (!instance) { host.instance = undefined; return startHost(); }
+      if (showingStatus) return startHost();
+    }).catch(error => {
+      if (revision === connectionRevision && !exiting && !closing && !updatingHost) return status(`后台连接未完成\n\n${error.message}\n\n可从托盘重新连接后台。`);
+    }).finally(() => { checkingHost = false; });
   }, 15000);
 }
 app.on('before-quit', event => { if (!exiting) { event.preventDefault(); void exitApp(); } });
