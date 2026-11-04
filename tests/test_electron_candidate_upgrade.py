@@ -59,3 +59,24 @@ def test_state_recovery_release_requires_both_deployed_baselines_and_a_real_roll
     assert 'C:/private' not in str(public)
     with pytest.raises(RuntimeError):collector.public_upgrade_matrix(proof,[],'0.5.0')
     with pytest.raises(RuntimeError):collector.public_upgrade_matrix({**proof,'rollback_verified':False},[other],'0.5.0')
+
+
+def test_reconnect_release_requires_the_last_official_054_upgrade_proof():
+    collector = module_at('packaging/collect_delivery.py')
+    primary = {'ok': True, 'version': '0.5.6', 'baseline_version': '0.4.3',
+               'next_version': '0.5.7', 'cleanup_complete': True, 'rollback_verified': True,
+               'checks': ['full-installer', 'native-package-update'], 'limitations': []}
+    legacy = {**primary, 'baseline_version': '0.4.4', 'rollback_verified': False}
+    current = {**primary, 'baseline_version': '0.5.4', 'rollback_verified': False,
+               'directory': 'private-machine-fixture',
+               'checks': ['full-installer-0.5.4-to-0.5.6', 'native-package-update-0.5.4-to-0.5.6']}
+    with pytest.raises(RuntimeError, match='0.5.4'):
+        collector.public_upgrade_matrix(primary, [legacy], '0.5.6')
+    public = collector.public_upgrade_matrix(primary, [legacy, current], '0.5.6')
+    assert public['baseline_versions'] == ['0.4.3', '0.4.4', '0.5.4']
+    assert public['upgrade_paths'][2]['baseline_version'] == '0.5.4'
+    assert 'private-machine-fixture' not in str(public)
+    with pytest.raises(RuntimeError, match='cleanup'):
+        collector.public_upgrade_matrix(primary, [legacy, {**current, 'cleanup_complete': False}], '0.5.6')
+    with pytest.raises(RuntimeError, match='both'):
+        collector.public_upgrade_matrix(primary, [legacy, {**current, 'checks': current['checks'][:1]}], '0.5.6')
