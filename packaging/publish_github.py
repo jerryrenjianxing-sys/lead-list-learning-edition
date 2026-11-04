@@ -91,10 +91,11 @@ def verify_release_checks(version, integrity, check, desktop_check, lifecycle_ch
         raise RuntimeError("Release did not pass deterministic validation")
 
 
-def verify_reconnect_check(result: Mapping[str, object], version: str) -> None:
+def verify_reconnect_check(result: Mapping[str, object], version: str, expected_electron: str) -> None:
     required = ('ok', 'faultObserved', 'recovered', 'healthyRoutePreserved',
                 'manualRecoveryPreserved', 'cleanup_complete')
-    if result.get('version') != version or any(result.get(key) is not True for key in required):
+    if (result.get('version') != version or not isinstance(expected_electron, str) or not expected_electron
+            or result.get('electron_version') != expected_electron or any(result.get(key) is not True for key in required)):
         raise RuntimeError('Packaged reconnect recovery and cleanup did not pass')
 
 
@@ -115,9 +116,10 @@ def main():
     directory = ROOT / "release" / version
     if tuple(map(int,version.split('.'))) >= (0,5,4):
         public_recovery_upgrade_summary(json.loads((directory/'ELECTRON_053_UPGRADE_RESULT.json').read_text(encoding='utf-8')),version)
-    if tuple(map(int,version.split('.'))) >= (0,5,6):
-        verify_reconnect_check(json.loads((directory/'ELECTRON_RECONNECT_RESULT.json').read_text(encoding='utf-8')),version)
     integrity = json.loads((directory / "build-integrity.json").read_text())
+    if tuple(map(int,version.split('.'))) >= (0,5,6):
+        verify_reconnect_check(json.loads((directory/'ELECTRON_RECONNECT_RESULT.json').read_text(encoding='utf-8')),
+                               version, integrity.get('desktop', {}).get('electron'))
     check = json.loads((directory / "SELF_TEST_RESULT.json").read_text(encoding="utf-8"))
     desktop_check = json.loads((directory / "ELECTRON_TEST_RESULT.json").read_text(encoding="utf-8"))
     lifecycle_check = json.loads((directory / "ELECTRON_LIFECYCLE_RESULT.json").read_text(encoding="utf-8"))

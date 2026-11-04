@@ -176,11 +176,24 @@ def test_publisher_validates_each_required_upgrade_path(publisher, reconnect_rel
 
 
 def test_reconnect_package_requires_real_recovery_and_cleanup(publisher):
-    proof = {'ok': True, 'version': '0.5.6', 'faultObserved': True, 'recovered': True,
+    proof = {'ok': True, 'version': '0.5.6', 'electron_version': '44.7.0', 'faultObserved': True, 'recovered': True,
              'healthyRoutePreserved': True, 'manualRecoveryPreserved': True, 'cleanup_complete': True}
-    publisher.verify_reconnect_check(proof, '0.5.6')
+    publisher.verify_reconnect_check(proof, '0.5.6', '44.7.0')
     for key in ('ok', 'faultObserved', 'recovered', 'healthyRoutePreserved', 'manualRecoveryPreserved', 'cleanup_complete'):
         with pytest.raises(RuntimeError, match='reconnect'):
-            publisher.verify_reconnect_check({**proof, key: False}, '0.5.6')
+            publisher.verify_reconnect_check({**proof, key: False}, '0.5.6', '44.7.0')
     with pytest.raises(RuntimeError, match='reconnect'):
-        publisher.verify_reconnect_check({**proof, 'version': '0.5.4'}, '0.5.6')
+        publisher.verify_reconnect_check({**proof, 'version': '0.5.4'}, '0.5.6', '44.7.0')
+
+
+def test_reconnect_receipt_requires_the_measured_electron_runtime(publisher):
+    missing = {'ok': True, 'version': '0.5.6', 'faultObserved': True, 'recovered': True,
+               'healthyRoutePreserved': True, 'manualRecoveryPreserved': True, 'cleanup_complete': True}
+    with pytest.raises(RuntimeError, match='reconnect'):
+        publisher.verify_reconnect_check(missing, '0.5.6', '44.7.0')
+    measured = {**missing, 'electron_version': '44.7.0'}
+    publisher.verify_reconnect_check(measured, '0.5.6', '44.7.0')
+    with pytest.raises(RuntimeError, match='reconnect'):
+        publisher.verify_reconnect_check(measured, '0.5.6', '43.0.0')
+    with pytest.raises(RuntimeError, match='reconnect'):
+        publisher.verify_reconnect_check(measured, '0.5.6', None)

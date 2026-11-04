@@ -6,7 +6,7 @@
 
 - 完整Python回归、前端构建、Electron单元及页面集成检查。
 - 干净源码构建的桌面、Python、安装包、更新包、源码和Skill版本一致；包内文件逐一校验并生成SHA256SUMS。
-- 真实包内故障恢复：发生认证就绪检查失败后自动恢复；正常页面及手动打开页面的位置保留；清理完成，并记录实际Electron版本。对应ELECTRON_RECONNECT_RESULT.json。
+- 真实包内故障恢复：发生认证就绪检查失败后自动恢复；正常页面及手动打开页面的位置保留；清理完成，分别记录实际应用版本和运行中的Electron引擎版本，后者须与包清单一致。对应ELECTRON_RECONNECT_RESULT.json。
 - 桌面启动、退出、后台缺失恢复、Skill文件复制和独立运行自检。对应桌面、生命周期、Skill和SELF_TEST_RESULT.json。
 - 0.4.3、0.4.4、0.5.4分别通过完整安装及原生更新路径，0.4.3回退单独排练；0.5.3已耗尽却假等待的旧状态修复继续验收。对应升级矩阵和ELECTRON_053_UPGRADE_RESULT.json。
 - 使用新的私有0.5.7安装及更新夹具验证原生更新器；私有包不发布为公开版本。对应ELECTRON_NATIVE_UPDATE_RESULT.json。
